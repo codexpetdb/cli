@@ -1,0 +1,55 @@
+{
+  "name": "petdb",
+  "version": "1.0.0",
+  "description": "Install verified Codex pets from CodexPetDB.",
+  "type": "module",
+  "bin": {
+    "petdb": "dist/cli.js"
+  },
+  "files": [
+    "contracts",
+    "dist",
+    "README.md",
+    "README.zh-CN.md"
+  ],
+  "engines": {
+    "node": ">=26.4.0 <27"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "biome check . && redocly lint contracts/openapi.json --extends=minimal",
+    "deploy:manual": "node scripts/deploy-manual.mjs",
+    "openapi:preview": "scalar document serve contracts/openapi.json --watch --port 4001",
+    "pack:smoke": "node scripts/pack-smoke.mjs",
+    "prepack": "pnpm build",
+    "start": "node dist/cli.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.3.12",
+    "@redocly/cli": "2.39.0",
+    "@scalar/cli": "2.0.1",
+    "@types/node": "^26.0.0",
+    "typescript": "^5.7.2",
+    "vitest": "~3.2.4"
+  },
+  "license": "MIT",
+  "packageManager": "pnpm@11.13.0",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "directory": ".",
+    "type": "git",
+    "url": "git+https://github.com/codexpetdb/cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/codexpetdb/cli/issues"
+  },
+  "homepage": "https://github.com/codexpetdb/cli#readme"
+}
