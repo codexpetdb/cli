@@ -21,11 +21,12 @@ and author. `install` reads site discovery and the same catalog, derives the
 package URL from the trusted asset origin, and verifies its content type, byte
 length, SHA-256, ZIP structure, and `pet.json.id` before a recoverable install.
 
-Collection installation fetches one collection manifest and one catalog, then
-installs pets in manifest order. It stops at the first failure and keeps pets
-already installed, so rerunning the command is safe. A collection can contain
-at most 100 pets. Successful installs send a two-second best-effort metrics
-request; reporting failures never change the command exit code.
+Collection installation fetches the static Pet and Collection catalogs once,
+then installs pets in the Collection catalog's declared order. It stops at the
+first failure and keeps pets already installed, so rerunning the command is
+safe. A collection can contain at most 100 pets. Successful installs send a
+two-second best-effort metrics request; reporting failures never change the
+command exit code.
 
 ```sh
 petdb help
@@ -39,8 +40,9 @@ filesystem or installation failure.
 
 - [Live OpenAPI 1.0.0](https://cdn.codexpetdb.com/contracts/public/v1.0.0/openapi.json)
 - [Live pet catalog](https://cdn.codexpetdb.com/catalogs/v1/pets.json)
+- [Live collection catalog](https://cdn.codexpetdb.com/catalogs/v1/collections.json)
 
-The OpenAPI contract and catalog are generated and published by the private Web
+The OpenAPI contract and catalogs are generated and published by the private Web
 project. They are linked here for community inspection but are not copied into
 the npm package or this repository.
 

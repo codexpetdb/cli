@@ -72,6 +72,7 @@ interface DiscoveryDocument {
   };
   assets: { delivery: 'cdn' | 'proxy'; origin: string };
   catalogUrl: string;
+  collectionCatalogUrl: string;
   cli?: { binary: 'petdb'; minVersion: string; packageName: 'petdb' };
   docsUrl: string;
   product: 'CodexPetDB';
@@ -84,6 +85,7 @@ export interface DiscoveredApi {
   assetDelivery: 'cdn' | 'proxy';
   assetOrigin: URL;
   catalogUrl: URL;
+  collectionCatalogUrl: URL;
   siteUrl: URL;
 }
 
@@ -158,6 +160,11 @@ export async function downloadCatalog(
     options
   );
   if (!response.ok) {
+    if (response.status === 404 || response.status === 410) {
+      throw integrityError(
+        'Pet catalog is unavailable. It may not be published yet or may be updating; retry later.'
+      );
+    }
     throw new CliError(
       `Pet catalog failed with HTTP ${response.status}.`,
       ExitCode.Network
@@ -276,6 +283,7 @@ function validateDiscovery(
       'api',
       'assets',
       'catalogUrl',
+      'collectionCatalogUrl',
       ...(document.cli === undefined ? [] : ['cli']),
       'docsUrl',
       'product',
@@ -291,6 +299,7 @@ function validateDiscovery(
       document.assets.delivery !== 'proxy') ||
     typeof document.assets.origin !== 'string' ||
     typeof document.catalogUrl !== 'string' ||
+    typeof document.collectionCatalogUrl !== 'string' ||
     typeof document.docsUrl !== 'string' ||
     typeof document.siteUrl !== 'string'
   ) {
@@ -322,11 +331,18 @@ function validateDiscovery(
     assetOrigin,
     document.assets.delivery
   );
+  const collectionCatalogUrl = parseCollectionCatalogUrl(
+    document.collectionCatalogUrl,
+    site,
+    assetOrigin,
+    document.assets.delivery
+  );
   if (
     !declaredSite ||
     !apiBaseUrl ||
     !assetOrigin ||
     !catalogUrl ||
+    !collectionCatalogUrl ||
     !parseOpenApiUrl(api.openApiUrl, site, assetOrigin) ||
     !exactUrl(document.docsUrl, `${site.origin}/en/docs`)
   ) {
@@ -338,6 +354,7 @@ function validateDiscovery(
     assetDelivery: document.assets.delivery,
     assetOrigin,
     catalogUrl,
+    collectionCatalogUrl,
     siteUrl: declaredSite,
   };
 }
@@ -557,6 +574,22 @@ function parseCatalogUrl(
     return exactUrl(value, `${assetOrigin.origin}/catalogs/v1/pets.json`);
   }
   return exactStorageUrl(value, site, 'catalogs/v1/pets.json');
+}
+
+function parseCollectionCatalogUrl(
+  value: string,
+  site: URL,
+  assetOrigin: URL | null,
+  delivery: 'cdn' | 'proxy'
+): URL | null {
+  if (!assetOrigin) return null;
+  if (delivery === 'cdn') {
+    return exactUrl(
+      value,
+      `${assetOrigin.origin}/catalogs/v1/collections.json`
+    );
+  }
+  return exactStorageUrl(value, site, 'catalogs/v1/collections.json');
 }
 
 function parseOpenApiUrl(

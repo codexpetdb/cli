@@ -24,6 +24,9 @@ describe('catalog discovery and downloads', () => {
       assetDelivery: 'cdn',
       assetOrigin: new URL('https://cdn.pets.example'),
       catalogUrl: new URL('https://cdn.pets.example/catalogs/v1/pets.json'),
+      collectionCatalogUrl: new URL(
+        'https://cdn.pets.example/catalogs/v1/collections.json'
+      ),
     });
   });
 
@@ -38,6 +41,8 @@ describe('catalog discovery and downloads', () => {
       assets: { delivery: 'proxy', origin: 'http://localhost:3000' },
       catalogUrl:
         'http://localhost:3000/api/storage/file?key=catalogs%2Fv1%2Fpets.json',
+      collectionCatalogUrl:
+        'http://localhost:3000/api/storage/file?key=catalogs%2Fv1%2Fcollections.json',
       docsUrl: 'http://localhost:3000/en/docs',
       siteUrl: 'http://localhost:3000',
     });
@@ -46,6 +51,31 @@ describe('catalog discovery and downloads', () => {
         fetchImpl: vi.fn(async () => Response.json(document)) as typeof fetch,
       })
     ).resolves.toMatchObject({ assetDelivery: 'proxy' });
+  });
+
+  it('requires the exact Collection catalog URL', async () => {
+    const missing = discovery();
+    delete (missing as Partial<typeof missing>).collectionCatalogUrl;
+    await expectFailure(
+      discoverApi('https://pets.example', {
+        fetchImpl: vi.fn(async () => Response.json(missing)) as typeof fetch,
+      }),
+      ExitCode.Integrity
+    );
+
+    await expectFailure(
+      discoverApi('https://pets.example', {
+        fetchImpl: vi.fn(async () =>
+          Response.json(
+            discovery({
+              collectionCatalogUrl:
+                'https://evil.example/catalogs/v1/collections.json',
+            })
+          )
+        ) as typeof fetch,
+      }),
+      ExitCode.Integrity
+    );
   });
 
   it('downloads and validates a minified catalog regardless of Content-Length', async () => {
@@ -86,6 +116,27 @@ describe('catalog discovery and downloads', () => {
         ) as typeof fetch,
       }),
       ExitCode.Integrity
+    );
+  });
+
+  it('distinguishes missing Pet catalog data from missing discovery', async () => {
+    const discoveredApi = await discovered();
+    await expectFailure(
+      downloadCatalog({
+        discoveredApi,
+        fetchImpl: vi.fn(
+          async () => new Response(null, { status: 404 })
+        ) as typeof fetch,
+      }),
+      ExitCode.Integrity
+    );
+    await expectFailure(
+      discoverApi('https://pets.example', {
+        fetchImpl: vi.fn(
+          async () => new Response(null, { status: 404 })
+        ) as typeof fetch,
+      }),
+      ExitCode.Network
     );
   });
 
@@ -232,6 +283,8 @@ function discovery(overrides: Record<string, unknown> = {}) {
     },
     assets: { delivery: 'cdn', origin: 'https://cdn.pets.example' },
     catalogUrl: 'https://cdn.pets.example/catalogs/v1/pets.json',
+    collectionCatalogUrl:
+      'https://cdn.pets.example/catalogs/v1/collections.json',
     cli: { binary: 'petdb', minVersion: '1.0.0', packageName: 'petdb' },
     docsUrl: 'https://pets.example/en/docs',
     product: 'CodexPetDB',

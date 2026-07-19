@@ -19,10 +19,10 @@ npx petdb install --collection cozy-friends
 地址；可恢复安装前会校验 Content-Type、字节长度、SHA-256、ZIP 结构和
 `pet.json.id`。
 
-Collection 安装只拉取一次 Collection manifest 和一次 Catalog，并按 manifest
-顺序安装。命令遇到首个失败即停止，已经安装的桌宠会保留，因此可以安全重试。
-单个集合最多包含 100 只桌宠。成功安装后会在两秒内尽力上报统计；上报失败不会
-改变命令退出码。
+Collection 安装分别拉取一次静态 Pet Catalog 和 Collection Catalog，并按
+Collection Catalog 中声明的顺序安装。命令遇到首个失败即停止，已经安装的桌宠会
+保留，因此可以安全重试。单个集合最多包含 100 只桌宠。成功安装后会在两秒内尽力
+上报统计；上报失败不会改变命令退出码。
 
 ```sh
 petdb help
@@ -36,6 +36,7 @@ petdb version
 
 - [线上 OpenAPI 1.0.0](https://cdn.codexpetdb.com/contracts/public/v1.0.0/openapi.json)
 - [线上 Pet Catalog](https://cdn.codexpetdb.com/catalogs/v1/pets.json)
+- [线上 Collection Catalog](https://cdn.codexpetdb.com/catalogs/v1/collections.json)
 
 OpenAPI 和 Catalog 均由闭源 Web 项目生成并发布。CLI 仓库仅提供社区审阅链接，
 不会把对应文件复制进 npm 包或本仓库。

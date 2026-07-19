@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { type CliError, ExitCode } from '../src/errors.js';
-import { assertPetId } from '../src/pet-id.js';
+import {
+  assertCollectionId,
+  assertPetId,
+  isCollectionId,
+} from '../src/pet-id.js';
 
 describe('assertPetId', () => {
   it.each([
@@ -22,6 +26,17 @@ describe('assertPetId', () => {
     '哆啦A梦-1',
   ])('rejects %s with usage exit code', (value) => {
     expect(() => assertPetId(value)).toThrowError(
+      expect.objectContaining<Partial<CliError>>({ exitCode: ExitCode.Usage })
+    );
+  });
+});
+
+describe('collection slug validation', () => {
+  it('uses the same predicate for arguments and Catalog values', () => {
+    expect(isCollectionId('cozy-friends')).toBe(true);
+    expect(assertCollectionId('cozy-friends')).toBe('cozy-friends');
+    expect(isCollectionId('Cozy_Friends')).toBe(false);
+    expect(() => assertCollectionId('Cozy_Friends')).toThrowError(
       expect.objectContaining<Partial<CliError>>({ exitCode: ExitCode.Usage })
     );
   });

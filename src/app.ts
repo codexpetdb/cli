@@ -1,5 +1,8 @@
 import { extractAndValidatePet } from './archive.js';
-import { downloadCollectionManifest } from './collection.js';
+import {
+  downloadCollectionCatalog,
+  findCatalogCollection,
+} from './collection.js';
 import {
   DEFAULT_SITE_URL,
   type CatalogPet,
@@ -37,7 +40,7 @@ interface Output {
 
 interface AppDependencies extends Output {
   catalog?: typeof downloadCatalog;
-  collectionManifest?: typeof downloadCollectionManifest;
+  collectionCatalog?: typeof downloadCollectionCatalog;
   discover?: typeof discoverApi;
   download?: typeof downloadInstallPackage;
   install?: typeof installPetFiles;
@@ -122,35 +125,54 @@ async function installCollection(
   collectionSlug: string,
   dependencies: AppDependencies
 ): Promise<void> {
-  const loaded = await loadCatalog(dependencies);
-  const getManifest =
-    dependencies.collectionManifest ?? downloadCollectionManifest;
-  const manifest = await getManifest(collectionSlug, {
-    clientVersion: dependencies.version ?? CLI_VERSION,
-    discoveredApi: loaded.discoveredApi,
+  const clientVersion = dependencies.version ?? CLI_VERSION;
+  const siteUrl = process.env.PETDB_SITE_URL ?? DEFAULT_SITE_URL;
+  const discover = dependencies.discover ?? discoverApi;
+  const discoveredApi = await discover(siteUrl, { clientVersion });
+  const [petResult, collectionResult] = await Promise.all([
+    (dependencies.catalog ?? downloadCatalog)({
+      clientVersion,
+      discoveredApi,
+    }),
+    (dependencies.collectionCatalog ?? downloadCollectionCatalog)({
+      clientVersion,
+      discoveredApi,
+    }),
+  ]);
+  const collection = findCatalogCollection(
+    collectionResult.catalog,
+    collectionSlug
+  );
+  const pets = collection.petSlugs.map((slug) => {
+    const pet = petResult.catalog.pets.find(
+      (candidate) => candidate.slug === slug
+    );
+    if (!pet) {
+      throw new CliError(
+        `Collection '${collectionSlug}' references Pet '${slug}', but it is unavailable in pets.json. The catalogs may be updating; retry later.`,
+        ExitCode.Integrity
+      );
+    }
+    return pet;
   });
   dependencies.stdout.write(
-    `Installing collection '${collectionSlug}' (${manifest.petSlugs.length} pets).\n`
+    `Installing collection '${collectionSlug}' (${pets.length} pets).\n`
   );
-  for (let index = 0; index < manifest.petSlugs.length; index += 1) {
-    const slug = manifest.petSlugs[index] as string;
+  for (let index = 0; index < pets.length; index += 1) {
+    const pet = pets[index] as CatalogPet;
     try {
-      await installPet(
-        findCatalogPet(loaded.catalog, slug),
-        loaded.discoveredApi,
-        dependencies
-      );
+      await installPet(pet, discoveredApi, dependencies);
     } catch (error) {
       const normalized = normalizeError(error);
       throw new CliError(
-        `Collection '${collectionSlug}' stopped after ${index} of ${manifest.petSlugs.length} pets while installing '${slug}': ${normalized.message}`,
+        `Collection '${collectionSlug}' stopped after ${index} of ${pets.length} pets while installing '${pet.slug}': ${normalized.message}`,
         normalized.exitCode,
         { cause: error }
       );
     }
   }
   dependencies.stdout.write(
-    `Installed collection '${collectionSlug}' (${manifest.petSlugs.length} pets).\n`
+    `Installed collection '${collectionSlug}' (${pets.length} pets).\n`
   );
 }
 

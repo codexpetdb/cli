@@ -116,6 +116,10 @@ try {
         },
         assets: { delivery: 'proxy', origin },
         catalogUrl: storageUrl(origin, 'catalogs/v1/pets.json'),
+        collectionCatalogUrl: storageUrl(
+          origin,
+          'catalogs/v1/collections.json'
+        ),
         cli: {
           binary: 'petdb',
           minVersion: '1.0.0',
@@ -125,14 +129,6 @@ try {
         product: 'CodexPetDB',
         schemaVersion: 1,
         siteUrl: origin,
-      });
-      return;
-    }
-    if (request.url === '/api/v1/pub/collections/cozy-friends/manifest') {
-      json(response, {
-        collectionSlug: 'cozy-friends',
-        petSlugs: [...pets.keys()],
-        schemaVersion: 1,
       });
       return;
     }
@@ -147,6 +143,10 @@ try {
     const key = storageKey(request.url);
     if (key === 'catalogs/v1/pets.json') {
       json(response, catalogFixture(origin, pets));
+      return;
+    }
+    if (key === 'catalogs/v1/collections.json') {
+      json(response, collectionCatalogFixture(pets));
       return;
     }
     const packageMatch = key?.match(
@@ -223,7 +223,7 @@ try {
     assertCountDelta(
       requestCounts,
       before,
-      'GET /api/v1/pub/collections/cozy-friends/manifest',
+      `GET /api/storage/file?key=${encodeURIComponent('catalogs/v1/collections.json')}`,
       1
     );
     for (const fixture of pets.values()) {
@@ -294,6 +294,21 @@ function catalogFixture(origin, pets) {
     })),
     schemaVersion: 1,
     total: pets.size,
+  };
+}
+
+function collectionCatalogFixture(pets) {
+  return {
+    collections: [
+      {
+        name: 'Cozy friends',
+        petSlugs: [...pets.keys()],
+        slug: 'cozy-friends',
+      },
+    ],
+    generatedAt: '2026-07-19T00:00:00.000Z',
+    schemaVersion: 1,
+    total: 1,
   };
 }
 

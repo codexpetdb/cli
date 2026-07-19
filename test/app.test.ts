@@ -15,6 +15,9 @@ const discoveredApi: DiscoveredApi = {
   assetDelivery: 'cdn',
   assetOrigin: new URL('https://cdn.pets.example'),
   catalogUrl: new URL('https://cdn.pets.example/catalogs/v1/pets.json'),
+  collectionCatalogUrl: new URL(
+    'https://cdn.pets.example/catalogs/v1/collections.json'
+  ),
   siteUrl: new URL('https://pets.example'),
 };
 
@@ -53,20 +56,20 @@ describe('CLI commands', () => {
     );
   });
 
-  it('fetches discovery, catalog, and collection manifest once', async () => {
+  it('fetches discovery and both catalogs once', async () => {
     const discover = vi.fn(async () => discoveredApi);
     const catalog = vi.fn(async () => ({
       catalog: fixtureCatalog(),
       discoveredApi,
     }));
-    const manifest = vi.fn(async () => ({
-      collectionSlug: 'forest-friends',
-      petSlugs: ['sleepy-fox', 'boba-bear'],
+    const collections = vi.fn(async () => ({
+      catalog: fixtureCollectionCatalog(),
+      discoveredApi,
     }));
     const install = vi.fn(async () => undefined);
     const output = dependencies({
       catalog,
-      collectionManifest: manifest,
+      collectionCatalog: collections,
       discover,
       install,
     });
@@ -75,7 +78,7 @@ describe('CLI commands', () => {
     ).resolves.toBe(ExitCode.Success);
     expect(discover).toHaveBeenCalledOnce();
     expect(catalog).toHaveBeenCalledOnce();
-    expect(manifest).toHaveBeenCalledOnce();
+    expect(collections).toHaveBeenCalledOnce();
     expect(install).toHaveBeenCalledTimes(2);
   });
 
@@ -93,6 +96,23 @@ describe('CLI commands', () => {
     ).resolves.toBe(ExitCode.Network);
     expect(install).toHaveBeenCalledOnce();
     expect(output.stderrText()).toContain('stopped after 1 of 2 pets');
+  });
+
+  it('fails before installation when the two catalogs are inconsistent', async () => {
+    const install = vi.fn(async () => undefined);
+    const output = dependencies({
+      collectionCatalog: vi.fn(async () => ({
+        catalog: fixtureCollectionCatalog(['missing']),
+        discoveredApi,
+      })),
+      install,
+    });
+
+    await expect(
+      run(['install', '--collection', 'forest-friends'], output)
+    ).resolves.toBe(ExitCode.Integrity);
+    expect(install).not.toHaveBeenCalled();
+    expect(output.stderrText()).toContain('catalogs may be updating');
   });
 
   it('rejects removed aliases and invalid arguments', async () => {
@@ -113,9 +133,9 @@ function dependencies(overrides: Record<string, unknown> = {}) {
   let stderr = '';
   return {
     catalog: vi.fn(async () => ({ catalog: fixtureCatalog(), discoveredApi })),
-    collectionManifest: vi.fn(async () => ({
-      collectionSlug: 'forest-friends',
-      petSlugs: ['sleepy-fox', 'boba-bear'],
+    collectionCatalog: vi.fn(async () => ({
+      catalog: fixtureCollectionCatalog(),
+      discoveredApi,
     })),
     discover: vi.fn(async () => discoveredApi),
     download: vi.fn(async (pet: CatalogPet) => installDownload(pet.slug)),
@@ -136,6 +156,15 @@ function dependencies(overrides: Record<string, unknown> = {}) {
     stdoutText: () => stdout,
     ...overrides,
   } as any;
+}
+
+function fixtureCollectionCatalog(petSlugs = ['sleepy-fox', 'boba-bear']) {
+  return {
+    collections: [{ name: 'Forest friends', petSlugs, slug: 'forest-friends' }],
+    generatedAt: '2026-07-19T00:00:00.000Z',
+    schemaVersion: 1 as const,
+    total: 1,
+  };
 }
 
 function fixtureCatalog(): PublicPetCatalog {

@@ -17,17 +17,21 @@ export function assertPetId(value: string): string {
 }
 
 export function assertCollectionId(value: string): string {
-  if (
-    value.length < 3 ||
-    value.length > 64 ||
-    !COLLECTION_SLUG_PATTERN.test(value)
-  ) {
+  if (!isCollectionId(value)) {
     throw new CliError(
       'Collection slug must be 3-64 lowercase letters, numbers, or hyphens.',
       ExitCode.Usage
     );
   }
   return value;
+}
+
+export function isCollectionId(value: string): boolean {
+  return (
+    value.length >= 3 &&
+    value.length <= 64 &&
+    COLLECTION_SLUG_PATTERN.test(value)
+  );
 }
 
 export function isPublicId(value: string): boolean {
