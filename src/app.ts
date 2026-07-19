@@ -2,9 +2,13 @@ import { extractAndValidatePet } from './archive.js';
 import { downloadCollectionManifest } from './collection.js';
 import {
   DEFAULT_SITE_URL,
+  type CatalogPet,
   type DiscoveredApi,
   discoverApi,
+  downloadCatalog,
   downloadInstallPackage,
+  findCatalogPet,
+  reportInstall,
 } from './discovery.js';
 import { CliError, ExitCode, type ExitCodeValue } from './errors.js';
 import { installPetFiles, recoverInstall } from './install.js';
@@ -15,8 +19,9 @@ import { CLI_VERSION } from './version.js';
 const HELP = `petdb - install verified Codex pets
 
 Usage:
-  petdb add <pet-id>
-  petdb add-collection <collection-slug>
+  petdb list
+  petdb install <pet-slug>
+  petdb install --collection <collection-slug>
   petdb help
   petdb version
 
@@ -31,11 +36,13 @@ interface Output {
 }
 
 interface AppDependencies extends Output {
+  catalog?: typeof downloadCatalog;
   collectionManifest?: typeof downloadCollectionManifest;
   discover?: typeof discoverApi;
   download?: typeof downloadInstallPackage;
   install?: typeof installPetFiles;
   recover?: typeof recoverInstall;
+  report?: typeof reportInstall;
   version?: string;
 }
 
@@ -46,9 +53,6 @@ export async function run(
     stdout: process.stdout,
   }
 ): Promise<ExitCodeValue> {
-  const stdout = dependencies.stdout;
-  const stderr = dependencies.stderr;
-
   try {
     const [command, ...rest] = args;
     if (
@@ -58,93 +62,126 @@ export async function run(
       command === '-h'
     ) {
       if (rest.length > 0) throw usageError('help does not accept arguments.');
-      stdout.write(HELP);
+      dependencies.stdout.write(HELP);
       return ExitCode.Success;
     }
-
     if (command === 'version' || command === '--version' || command === '-v') {
-      if (rest.length > 0) {
+      if (rest.length > 0)
         throw usageError('version does not accept arguments.');
-      }
-      stdout.write(`${dependencies.version ?? CLI_VERSION}\n`);
+      dependencies.stdout.write(`${dependencies.version ?? CLI_VERSION}\n`);
       return ExitCode.Success;
     }
-
-    if (command !== 'add' && command !== 'add-collection') {
+    if (command === 'list') {
+      if (rest.length > 0) throw usageError('list does not accept arguments.');
+      await listPets(dependencies);
+      return ExitCode.Success;
+    }
+    if (command !== 'install')
       throw usageError(`Unknown command '${command}'.`);
-    }
-    if (rest.length !== 1) {
-      throw usageError(
-        command === 'add'
-          ? 'add requires exactly one pet id.'
-          : 'add-collection requires exactly one collection slug.'
-      );
-    }
 
-    if (command === 'add') {
-      await installPet(assertPetId(rest[0] as string), dependencies);
+    if (rest[0] === '--collection') {
+      if (rest.length !== 2) {
+        throw usageError('install --collection requires one collection slug.');
+      }
+      await installCollection(
+        assertCollectionId(rest[1] as string),
+        dependencies
+      );
       return ExitCode.Success;
     }
-
-    const collectionId = assertCollectionId(rest[0] as string);
-    const clientVersion = dependencies.version ?? CLI_VERSION;
-    const discover = dependencies.discover ?? discoverApi;
-    const discoveredApi = await discover(
-      process.env.PETDB_SITE_URL ?? DEFAULT_SITE_URL,
-      { clientVersion }
-    );
-    const getManifest =
-      dependencies.collectionManifest ?? downloadCollectionManifest;
-    const manifest = await getManifest(collectionId, {
-      clientVersion,
-      discoveredApi,
-    });
-    stdout.write(
-      `Installing collection '${collectionId}' (${manifest.petIds.length} pets).\n`
-    );
-    for (let index = 0; index < manifest.petIds.length; index += 1) {
-      const petId = manifest.petIds[index] as string;
-      try {
-        await installPet(petId, dependencies, discoveredApi);
-      } catch (error) {
-        const normalized = normalizeError(error);
-        throw new CliError(
-          `Collection '${collectionId}' stopped after ${index} of ${manifest.petIds.length} pets while installing '${petId}': ${normalized.message}`,
-          normalized.exitCode,
-          { cause: error }
-        );
-      }
-    }
-    stdout.write(
-      `Installed collection '${collectionId}' (${manifest.petIds.length} pets).\n`
+    if (rest.length !== 1)
+      throw usageError('install requires exactly one pet slug.');
+    const loaded = await loadCatalog(dependencies);
+    await installPet(
+      findCatalogPet(loaded.catalog, assertPetId(rest[0] as string)),
+      loaded.discoveredApi,
+      dependencies
     );
     return ExitCode.Success;
   } catch (error) {
     const normalized = normalizeError(error);
-    stderr.write(`petdb: ${normalized.message}\n`);
+    dependencies.stderr.write(`petdb: ${normalized.message}\n`);
     return normalized.exitCode;
   }
 }
 
-async function installPet(
-  petId: string,
-  dependencies: AppDependencies,
-  discoveredApi?: DiscoveredApi
+async function listPets(dependencies: AppDependencies): Promise<void> {
+  const { catalog, discoveredApi } = await loadCatalog(dependencies);
+  dependencies.stdout.write(`CodexPetDB pets (${catalog.total})\n`);
+  for (const pet of catalog.pets) {
+    dependencies.stdout.write(
+      `${pet.slug}\t${pet.displayName}\tby ${pet.author}\n`
+    );
+  }
+  dependencies.stdout.write(
+    `\nInstall with: petdb install <pet-slug>\nBrowse: ${new URL('/gallery', discoveredApi.siteUrl).href}\n`
+  );
+}
+
+async function installCollection(
+  collectionSlug: string,
+  dependencies: AppDependencies
 ): Promise<void> {
-  const target = resolvePetDirectory(petId);
-  const recover = dependencies.recover ?? recoverInstall;
-  await recover(target);
-  const download = dependencies.download ?? downloadInstallPackage;
-  const install = dependencies.install ?? installPetFiles;
-  const archive = await download(petId, {
+  const loaded = await loadCatalog(dependencies);
+  const getManifest =
+    dependencies.collectionManifest ?? downloadCollectionManifest;
+  const manifest = await getManifest(collectionSlug, {
+    clientVersion: dependencies.version ?? CLI_VERSION,
+    discoveredApi: loaded.discoveredApi,
+  });
+  dependencies.stdout.write(
+    `Installing collection '${collectionSlug}' (${manifest.petSlugs.length} pets).\n`
+  );
+  for (let index = 0; index < manifest.petSlugs.length; index += 1) {
+    const slug = manifest.petSlugs[index] as string;
+    try {
+      await installPet(
+        findCatalogPet(loaded.catalog, slug),
+        loaded.discoveredApi,
+        dependencies
+      );
+    } catch (error) {
+      const normalized = normalizeError(error);
+      throw new CliError(
+        `Collection '${collectionSlug}' stopped after ${index} of ${manifest.petSlugs.length} pets while installing '${slug}': ${normalized.message}`,
+        normalized.exitCode,
+        { cause: error }
+      );
+    }
+  }
+  dependencies.stdout.write(
+    `Installed collection '${collectionSlug}' (${manifest.petSlugs.length} pets).\n`
+  );
+}
+
+async function loadCatalog(dependencies: AppDependencies) {
+  const clientVersion = dependencies.version ?? CLI_VERSION;
+  const siteUrl = process.env.PETDB_SITE_URL ?? DEFAULT_SITE_URL;
+  const discover = dependencies.discover ?? discoverApi;
+  const discoveredApi = await discover(siteUrl, { clientVersion });
+  const getCatalog = dependencies.catalog ?? downloadCatalog;
+  return await getCatalog({ clientVersion, discoveredApi });
+}
+
+async function installPet(
+  pet: CatalogPet,
+  discoveredApi: DiscoveredApi,
+  dependencies: AppDependencies
+): Promise<void> {
+  const target = resolvePetDirectory(pet.slug);
+  await (dependencies.recover ?? recoverInstall)(target);
+  const archive = await (dependencies.download ?? downloadInstallPackage)(pet, {
     clientVersion: dependencies.version ?? CLI_VERSION,
     discoveredApi,
   });
-  const files = extractAndValidatePet(archive.bytes, petId);
-  await install(target, files);
+  const files = extractAndValidatePet(archive.bytes, pet.slug);
+  await (dependencies.install ?? installPetFiles)(target, files);
   dependencies.stdout.write(
-    `Installed '${petId}' (pet v${archive.metadata.petVersion}, revision ${archive.metadata.revisionId}) to ${target}\n`
+    `Installed '${pet.slug}' (revision ${archive.metadata.revisionNumber}, ${archive.metadata.revisionId}) to ${target}\n`
   );
+  await (dependencies.report ?? reportInstall)(pet.slug, discoveredApi, {
+    clientVersion: dependencies.version ?? CLI_VERSION,
+  });
 }
 
 function usageError(message: string): CliError {

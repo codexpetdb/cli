@@ -1,9 +1,9 @@
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
 import { strToU8, zipSync } from 'fflate';
 
 const packageRoot = path.resolve(import.meta.dirname, '..');
@@ -13,25 +13,37 @@ const sourcePackageJson = JSON.parse(
 );
 
 try {
-  run(
-    process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
-    ['pack', '--pack-destination', temporary],
-    packageRoot
-  );
-
+  const packedTarballDirectory = process.env.PETDB_PACKED_TARBALL_DIR?.trim();
+  if (!packedTarballDirectory) {
+    run(
+      process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
+      ['pack', '--pack-destination', temporary],
+      packageRoot
+    );
+  }
   const tarball = path.join(
-    temporary,
+    packedTarballDirectory
+      ? path.resolve(packageRoot, packedTarballDirectory)
+      : temporary,
     `${sourcePackageJson.name}-${sourcePackageJson.version}.tgz`
   );
   await writeFile(
     path.join(temporary, 'package.json'),
     JSON.stringify({ name: 'petdb-pack-smoke', private: true })
   );
-  run(
-    process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
-    ['add', '--offline', '--ignore-scripts', tarball],
-    temporary
-  );
+  if (packedTarballDirectory) {
+    run(
+      process.platform === 'win32' ? 'npm.cmd' : 'npm',
+      ['install', '--ignore-scripts', '--no-audit', '--no-fund', tarball],
+      temporary
+    );
+  } else {
+    run(
+      process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
+      ['add', '--offline', '--ignore-scripts', tarball],
+      temporary
+    );
+  }
 
   const installedRoot = path.join(temporary, 'node_modules', 'petdb');
   const packageJson = JSON.parse(
@@ -39,6 +51,9 @@ try {
   );
   if (packageJson.bin?.petdb !== 'dist/cli.js') {
     throw new Error('Packed package does not expose the petdb binary.');
+  }
+  if (await fileExists(path.join(installedRoot, 'contracts', 'openapi.json'))) {
+    throw new Error('Packed package must not contain an OpenAPI snapshot.');
   }
 
   const cli = path.join(installedRoot, 'dist', 'cli.js');
@@ -51,93 +66,97 @@ try {
     throw new Error(`Packed CLI version mismatch: ${version}`);
   }
   const help = run(process.execPath, [cli, 'help'], temporary).stdout;
-  if (!help.includes('petdb add <pet-id>')) {
-    throw new Error('Packed CLI help smoke test failed.');
+  for (const command of [
+    'petdb list',
+    'petdb install <pet-slug>',
+    'petdb install --collection <collection-slug>',
+  ]) {
+    if (!help.includes(command)) {
+      throw new Error(`Packed CLI help is missing: ${command}`);
+    }
   }
-  if (!help.includes('petdb add-collection <collection-slug>')) {
-    throw new Error('Packed CLI collection help smoke test failed.');
+  if (help.includes('petdb add')) {
+    throw new Error('Packed CLI help still exposes the removed add command.');
   }
 
   const pets = new Map([
-    ['boba', petFixture('boba', new Uint8Array([1, 2, 3, 4]))],
-    ['luna', petFixture('luna', new Uint8Array([5, 6, 7, 8]))],
+    [
+      'boba',
+      petFixture(
+        'boba',
+        '0197c001-7c00-7000-8000-000000000001',
+        new Uint8Array([1, 2, 3, 4]),
+        'spritesheet.png'
+      ),
+    ],
+    [
+      'luna',
+      petFixture(
+        'luna',
+        '0197c001-7c00-7000-8000-000000000002',
+        new Uint8Array([5, 6, 7, 8]),
+        'spritesheet.webp'
+      ),
+    ],
   ]);
-  let discoveryRequests = 0;
+  const requestCounts = new Map();
   const server = createServer((request, response) => {
     const origin = `http://127.0.0.1:${server.address().port}`;
+    increment(requestCounts, `${request.method} ${request.url}`);
     if (request.url === '/.well-known/codexpetdb.json') {
-      discoveryRequests += 1;
-      response.setHeader('Content-Type', 'application/json');
-      response.end(
-        JSON.stringify({
-          schemaVersion: 1,
-          product: 'CodexPetDB',
-          siteUrl: origin,
-          api: {
-            currentVersion: 'v1',
-            supportedVersions: ['v1'],
-            baseUrl: `${origin}/api/v1/pub`,
-            openApiUrl: `${origin}/api/storage/file?key=${encodeURIComponent('contracts/public/v1.0.0/openapi.json')}`,
-          },
-          assets: { origin },
-          catalogUrl: `${origin}/api/v1/pub/pet-catalog`,
-          docsUrl: `${origin}/en/docs`,
-          cli: {
-            binary: 'petdb',
-            minVersion: '1.0.0',
-            packageName: 'petdb',
-          },
-        })
-      );
+      json(response, {
+        api: {
+          baseUrl: `${origin}/api/v1/pub`,
+          currentVersion: 'v1',
+          openApiUrl: storageUrl(
+            origin,
+            'contracts/public/v1.0.0/openapi.json'
+          ),
+          supportedVersions: ['v1'],
+        },
+        assets: { delivery: 'proxy', origin },
+        catalogUrl: storageUrl(origin, 'catalogs/v1/pets.json'),
+        cli: {
+          binary: 'petdb',
+          minVersion: '1.0.0',
+          packageName: 'petdb',
+        },
+        docsUrl: `${origin}/en/docs`,
+        product: 'CodexPetDB',
+        schemaVersion: 1,
+        siteUrl: origin,
+      });
       return;
     }
     if (request.url === '/api/v1/pub/collections/cozy-friends/manifest') {
-      response.setHeader('Content-Type', 'application/json');
-      response.end(
-        JSON.stringify({
-          collectionId: 'cozy-friends',
-          collectionSlug: 'cozy-friends',
-          pets: [...pets.keys()].map((id) => ({
-            id,
-            package: `${origin}/assets/${id}.zip`,
-          })),
-          schemaVersion: 1,
-        })
-      );
+      json(response, {
+        collectionSlug: 'cozy-friends',
+        petSlugs: [...pets.keys()],
+        schemaVersion: 1,
+      });
       return;
     }
-    const installMatch = request.url?.match(
-      /^\/api\/v1\/pub\/pets\/([^/]+)\/install\?client=petdb$/
+    const reportMatch = request.url?.match(
+      /^\/api\/v1\/pub\/pets\/([^/]+)\/installs$/u
     );
-    const installPet = installMatch ? pets.get(installMatch[1]) : undefined;
-    if (installMatch && installPet) {
-      const id = installMatch[1];
-      response.setHeader('Content-Type', 'application/json');
-      response.end(
-        JSON.stringify({
-          data: {
-            formatVersion: 2,
-            package: {
-              byteSize: installPet.archive.byteLength,
-              contentType: 'application/zip',
-              filename: `${id}.zip`,
-              sha256: installPet.sha256,
-              url: `${origin}/assets/${id}.zip`,
-            },
-            petId: id,
-            revisionId: '0197c001-7c00-7000-8000-000000000001',
-          },
-          meta: { requestId: 'pack-smoke' },
-        })
-      );
+    if (request.method === 'POST' && reportMatch && pets.has(reportMatch[1])) {
+      response.statusCode = 204;
+      response.end();
       return;
     }
-    const assetMatch = request.url?.match(/^\/assets\/([^/]+)\.zip$/);
-    const assetPet = assetMatch ? pets.get(assetMatch[1]) : undefined;
-    if (assetPet) {
-      response.setHeader('Content-Length', String(assetPet.archive.byteLength));
+    const key = storageKey(request.url);
+    if (key === 'catalogs/v1/pets.json') {
+      json(response, catalogFixture(origin, pets));
+      return;
+    }
+    const packageMatch = key?.match(
+      /^revisions\/([0-9a-f-]{36})\/([A-Za-z0-9._~*-]+)\.zip$/u
+    );
+    const fixture = packageMatch ? pets.get(packageMatch[2]) : undefined;
+    if (fixture && packageMatch?.[1] === fixture.revisionId) {
+      response.setHeader('Content-Length', String(fixture.archive.byteLength));
       response.setHeader('Content-Type', 'application/zip');
-      response.end(assetPet.archive);
+      response.end(fixture.archive);
       return;
     }
     response.statusCode = 404;
@@ -146,67 +165,84 @@ try {
   await listen(server);
   try {
     const origin = `http://127.0.0.1:${server.address().port}`;
-    const codexHome = path.join(temporary, 'codex-home');
-    const add = await runAsync(
+    const env = (codexHome) => ({
+      ...process.env,
+      CODEX_HOME: codexHome,
+      PETDB_SITE_URL: origin,
+    });
+
+    const list = await runAsync(
       process.execPath,
-      [cli, 'add', 'boba'],
+      [cli, 'list'],
       temporary,
-      {
-        ...process.env,
-        CODEX_HOME: codexHome,
-        PETDB_SITE_URL: origin,
-      }
+      env(path.join(temporary, 'list-home'))
     );
-    const petDirectory = path.join(codexHome, 'pets', 'boba');
-    const manifest = JSON.parse(
-      await readFile(path.join(petDirectory, 'pet.json'), 'utf8')
-    );
-    const sprite = await readFile(path.join(petDirectory, 'spritesheet.png'));
-    if (manifest.id !== 'boba' || !sprite.equals(Buffer.from([1, 2, 3, 4]))) {
-      throw new Error('Packed CLI add smoke test installed incorrect files.');
-    }
     for (const expected of [
-      petDirectory,
-      'pet v2',
-      'revision 0197c001-7c00-7000-8000-000000000001',
+      'CodexPetDB pets (2)',
+      'boba\tBoba\tby CodexPetDB',
+      'luna\tLuna\tby CodexPetDB',
+      'petdb install <pet-slug>',
     ]) {
-      if (!add.stdout.includes(expected)) {
-        throw new Error(`Packed CLI add output is missing: ${expected}`);
+      if (!list.stdout.includes(expected)) {
+        throw new Error(`Packed CLI list output is missing: ${expected}`);
       }
     }
 
-    const collectionHome = path.join(temporary, 'collection-codex-home');
-    const discoveryBeforeCollection = discoveryRequests;
-    const addCollection = await runAsync(
+    const singleHome = path.join(temporary, 'single-home');
+    const install = await runAsync(
       process.execPath,
-      [cli, 'add-collection', 'cozy-friends'],
+      [cli, 'install', 'boba'],
       temporary,
-      {
-        ...process.env,
-        CODEX_HOME: collectionHome,
-        PETDB_SITE_URL: origin,
-      }
+      env(singleHome)
     );
-    if (discoveryRequests - discoveryBeforeCollection !== 1) {
-      throw new Error('add-collection must perform discovery exactly once.');
+    await assertInstalled(singleHome, pets.get('boba'));
+    if (!install.stdout.includes("Installed 'boba' (revision 1,")) {
+      throw new Error('Packed CLI install output is missing its summary.');
     }
-    for (const [id, fixture] of pets) {
-      const directory = path.join(collectionHome, 'pets', id);
-      const installedManifest = JSON.parse(
-        await readFile(path.join(directory, 'pet.json'), 'utf8')
-      );
-      const installedSprite = await readFile(
-        path.join(directory, 'spritesheet.png')
-      );
-      if (
-        installedManifest.id !== id ||
-        !installedSprite.equals(Buffer.from(fixture.sprite))
-      ) {
-        throw new Error(`Packed CLI installed incorrect collection pet: ${id}`);
-      }
+
+    const collectionHome = path.join(temporary, 'collection-home');
+    const before = snapshotCounts(requestCounts);
+    const collection = await runAsync(
+      process.execPath,
+      [cli, 'install', '--collection', 'cozy-friends'],
+      temporary,
+      env(collectionHome)
+    );
+    assertCountDelta(
+      requestCounts,
+      before,
+      'GET /.well-known/codexpetdb.json',
+      1
+    );
+    assertCountDelta(
+      requestCounts,
+      before,
+      `GET /api/storage/file?key=${encodeURIComponent('catalogs/v1/pets.json')}`,
+      1
+    );
+    assertCountDelta(
+      requestCounts,
+      before,
+      'GET /api/v1/pub/collections/cozy-friends/manifest',
+      1
+    );
+    for (const fixture of pets.values()) {
+      await assertInstalled(collectionHome, fixture);
     }
-    if (!addCollection.stdout.includes("Installed collection 'cozy-friends'")) {
+    if (
+      !collection.stdout.includes(
+        "Installed collection 'cozy-friends' (2 pets)."
+      )
+    ) {
       throw new Error('Packed CLI collection output is missing its summary.');
+    }
+    for (const slug of pets.keys()) {
+      const reports = [...requestCounts.entries()]
+        .filter(([key]) => key === `POST /api/v1/pub/pets/${slug}/installs`)
+        .reduce((total, [, count]) => total + count, 0);
+      if (reports < 1) {
+        throw new Error(`Packed CLI did not report installation for ${slug}.`);
+      }
     }
   } finally {
     await new Promise((resolve, reject) =>
@@ -218,18 +254,107 @@ try {
   await rm(temporary, { force: true, recursive: true });
 }
 
-function petFixture(id, sprite) {
+function petFixture(slug, revisionId, sprite, spritesheetFile) {
   const archive = zipSync({
     'pet.json': strToU8(
-      JSON.stringify({ id, spritesheetPath: 'spritesheet.png' })
+      JSON.stringify({ id: slug, spritesheetPath: spritesheetFile })
     ),
-    'spritesheet.png': sprite,
+    [spritesheetFile]: sprite,
   });
+  const sha256 = createHash('sha256').update(archive).digest('hex');
+  return { archive, revisionId, sha256, slug, sprite, spritesheetFile };
+}
+
+function catalogFixture(origin, pets) {
   return {
-    archive,
-    sha256: createHash('sha256').update(archive).digest('hex'),
-    sprite,
+    assetBase: `${origin}/`,
+    generatedAt: '2026-07-19T00:00:00.000Z',
+    pets: [...pets.values()].map((pet) => ({
+      assets: {
+        byteSize: {
+          manifest: 1,
+          package: pet.archive.byteLength,
+          poster: 1,
+          spritesheet: pet.sprite.byteLength,
+        },
+        prefix: `revisions/${pet.revisionId}/`,
+        sha256: {
+          manifest: '1'.repeat(64),
+          package: pet.sha256,
+          poster: '2'.repeat(64),
+          spritesheet: '3'.repeat(64),
+        },
+        spritesheetFile: pet.spritesheetFile,
+      },
+      author: 'CodexPetDB',
+      displayName: pet.slug[0].toUpperCase() + pet.slug.slice(1),
+      kind: 'creature',
+      revision: { id: pet.revisionId, number: 1 },
+      slug: pet.slug,
+    })),
+    schemaVersion: 1,
+    total: pets.size,
   };
+}
+
+async function assertInstalled(codexHome, fixture) {
+  const directory = path.join(codexHome, 'pets', fixture.slug);
+  const manifest = JSON.parse(
+    await readFile(path.join(directory, 'pet.json'), 'utf8')
+  );
+  const sprite = await readFile(path.join(directory, fixture.spritesheetFile));
+  if (
+    manifest.id !== fixture.slug ||
+    !sprite.equals(Buffer.from(fixture.sprite))
+  ) {
+    throw new Error(
+      `Packed CLI installed incorrect files for ${fixture.slug}.`
+    );
+  }
+}
+
+function storageUrl(origin, key) {
+  return `${origin}/api/storage/file?key=${encodeURIComponent(key)}`;
+}
+
+function storageKey(url) {
+  if (!url) return null;
+  const parsed = new URL(url, 'http://localhost');
+  return parsed.pathname === '/api/storage/file'
+    ? parsed.searchParams.get('key')
+    : null;
+}
+
+function json(response, value) {
+  response.setHeader('Content-Type', 'application/json; charset=utf-8');
+  response.end(JSON.stringify(value));
+}
+
+function increment(counts, key) {
+  counts.set(key, (counts.get(key) ?? 0) + 1);
+}
+
+function snapshotCounts(counts) {
+  return new Map(counts);
+}
+
+function assertCountDelta(counts, before, key, expected) {
+  const delta = (counts.get(key) ?? 0) - (before.get(key) ?? 0);
+  if (delta !== expected) {
+    throw new Error(
+      `${key} expected ${expected} request(s), received ${delta}.`
+    );
+  }
+}
+
+async function fileExists(file) {
+  try {
+    await readFile(file);
+    return true;
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false;
+    throw error;
+  }
 }
 
 function run(command, args, cwd) {
@@ -259,12 +384,14 @@ function runAsync(command, args, cwd, env) {
     child.stderr.on('data', (chunk) => {
       stderr += chunk;
     });
-    child.once('error', reject);
-    child.once('exit', (code) => {
+    child.on('error', reject);
+    child.on('close', (code) => {
       if (code === 0) resolve({ stderr, stdout });
       else
         reject(
-          new Error(`${command} failed with ${code}:\n${stdout}\n${stderr}`)
+          new Error(
+            `${command} ${args.join(' ')} failed (${code}):\n${stdout}\n${stderr}`
+          )
         );
     });
   });

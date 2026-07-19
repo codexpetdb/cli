@@ -1,188 +1,202 @@
+import { createHash } from 'node:crypto';
 import { strToU8, zipSync } from 'fflate';
 import { describe, expect, it, vi } from 'vitest';
 import { run } from '../src/app.js';
-import type { InstallDownload } from '../src/discovery.js';
+import type {
+  CatalogPet,
+  DiscoveredApi,
+  InstallDownload,
+  PublicPetCatalog,
+} from '../src/discovery.js';
 import { CliError, ExitCode } from '../src/errors.js';
 
+const discoveredApi: DiscoveredApi = {
+  apiBaseUrl: new URL('https://pets.example/api/v1/pub'),
+  assetDelivery: 'cdn',
+  assetOrigin: new URL('https://cdn.pets.example'),
+  catalogUrl: new URL('https://cdn.pets.example/catalogs/v1/pets.json'),
+  siteUrl: new URL('https://pets.example'),
+};
+
 describe('CLI commands', () => {
-  it('prints help', async () => {
-    const output = outputs();
+  it('prints the first-release help', async () => {
+    const output = dependencies();
     await expect(run(['help'], output)).resolves.toBe(ExitCode.Success);
-    expect(output.stdoutText()).toContain('petdb add <pet-id>');
-    expect(output.stdoutText()).toContain(
-      'petdb add-collection <collection-slug>'
-    );
+    expect(output.stdoutText()).toContain('petdb list');
+    expect(output.stdoutText()).toContain('petdb install <pet-slug>');
+    expect(output.stdoutText()).not.toContain('petdb add');
   });
 
-  it('prints version', async () => {
-    const output = outputs({ version: '9.8.7' });
-    await expect(run(['version'], output)).resolves.toBe(ExitCode.Success);
-    expect(output.stdoutText()).toBe('9.8.7\n');
+  it('lists the catalog in stable catalog order', async () => {
+    const output = dependencies();
+    await expect(run(['list'], output)).resolves.toBe(ExitCode.Success);
+    expect(output.stdoutText()).toContain('CodexPetDB pets (2)');
+    expect(output.stdoutText()).toContain('sleepy-fox\tSleepy Fox\tby Mira');
+    expect(output.stdoutText()).toContain('petdb install <pet-slug>');
   });
 
-  it('installs a valid pet', async () => {
-    const recover = vi.fn(async () => undefined);
-    const output = outputs({
-      download: vi.fn(async () => download('sleepy-fox')),
-      install: vi.fn(async () => undefined),
-      recover,
-    });
-    await expect(run(['add', 'sleepy-fox'], output)).resolves.toBe(
+  it('installs by slug and reports only after local installation', async () => {
+    const install = vi.fn(async () => undefined);
+    const report = vi.fn(async () => true);
+    const output = dependencies({ install, report });
+    await expect(run(['install', 'sleepy-fox'], output)).resolves.toBe(
       ExitCode.Success
     );
-    expect(output.install).toHaveBeenCalledOnce();
-    expect(recover).toHaveBeenCalledOnce();
-    expect(recover.mock.invocationCallOrder[0]).toBeLessThan(
-      output.download.mock.invocationCallOrder[0]
+    expect(install).toHaveBeenCalledOnce();
+    expect(report).toHaveBeenCalledWith(
+      'sleepy-fox',
+      discoveredApi,
+      expect.any(Object)
     );
-    expect(output.stdoutText()).toContain("Installed 'sleepy-fox'");
-    expect(output.stdoutText()).toContain('pet v1, revision rev_1');
-  });
-
-  it('returns usage exit code for invalid commands and ids', async () => {
-    const unknown = outputs();
-    const invalidId = outputs();
-    await expect(run(['remove'], unknown)).resolves.toBe(ExitCode.Usage);
-    await expect(run(['add', 'Fox 2'], invalidId)).resolves.toBe(
-      ExitCode.Usage
+    expect(install.mock.invocationCallOrder[0]).toBeLessThan(
+      report.mock.invocationCallOrder[0]
     );
   });
 
-  it.each([
-    ExitCode.Network,
-    ExitCode.Integrity,
-    ExitCode.FileSystem,
-  ])('preserves domain exit code %s', async (exitCode) => {
-    const output = outputs({
-      download: vi.fn(async () => {
-        throw new CliError('injected failure', exitCode);
-      }),
-    });
-    await expect(run(['add', 'sleepy-fox'], output)).resolves.toBe(exitCode);
-    expect(output.stderrText()).toContain('injected failure');
-  });
-
-  it('discovers once and installs a collection in manifest order', async () => {
-    const discoveredApi = {
-      apiBaseUrl: new URL('https://pets.example/api/v1/pub'),
-      assetOrigin: new URL('https://cdn.pets.example'),
-    };
+  it('fetches discovery, catalog, and collection manifest once', async () => {
     const discover = vi.fn(async () => discoveredApi);
-    const downloadPet = vi.fn(
-      async (id: string, _options?: { discoveredApi?: unknown }) => download(id)
-    );
+    const catalog = vi.fn(async () => ({
+      catalog: fixtureCatalog(),
+      discoveredApi,
+    }));
+    const manifest = vi.fn(async () => ({
+      collectionSlug: 'forest-friends',
+      petSlugs: ['sleepy-fox', 'boba-bear'],
+    }));
     const install = vi.fn(async () => undefined);
-    const output = outputs({
-      collectionManifest: vi.fn(async () => ({
-        collectionId: 'forest-friends',
-        petIds: ['sleepy-fox', 'boba-bear'],
-      })),
+    const output = dependencies({
+      catalog,
+      collectionManifest: manifest,
       discover,
-      download: downloadPet,
       install,
     });
-
     await expect(
-      run(['add-collection', 'forest-friends'], output)
+      run(['install', '--collection', 'forest-friends'], output)
     ).resolves.toBe(ExitCode.Success);
     expect(discover).toHaveBeenCalledOnce();
-    expect(downloadPet.mock.calls.map(([id]) => id)).toEqual([
-      'sleepy-fox',
-      'boba-bear',
-    ]);
-    expect(
-      downloadPet.mock.calls.every(
-        ([, options]) => options?.discoveredApi === discoveredApi
-      )
-    ).toBe(true);
+    expect(catalog).toHaveBeenCalledOnce();
+    expect(manifest).toHaveBeenCalledOnce();
     expect(install).toHaveBeenCalledTimes(2);
-    expect(output.stdoutText()).toContain(
-      "Installed collection 'forest-friends' (2 pets)."
-    );
   });
 
-  it('stops on the first failed pet and preserves its exit code', async () => {
+  it('stops a collection on the first failure and keeps completed installs', async () => {
     const install = vi.fn(async () => undefined);
-    let secondPetFails = true;
-    const downloadPet = vi.fn(async (id: string) => {
-      if (id === 'boba-bear' && secondPetFails) {
+    const download = vi.fn(async (pet: CatalogPet) => {
+      if (pet.slug === 'boba-bear') {
         throw new CliError('package unavailable', ExitCode.Network);
       }
-      return download(id);
+      return installDownload(pet.slug);
     });
-    const output = outputs({
-      collectionManifest: vi.fn(async () => ({
-        collectionId: 'forest-friends',
-        petIds: ['sleepy-fox', 'boba-bear'],
-      })),
-      discover: vi.fn(async () => ({
-        apiBaseUrl: new URL('https://pets.example/api/v1/pub'),
-        assetOrigin: new URL('https://cdn.pets.example'),
-      })),
-      download: downloadPet,
-      install,
-    });
-
+    const output = dependencies({ download, install });
     await expect(
-      run(['add-collection', 'forest-friends'], output)
+      run(['install', '--collection', 'forest-friends'], output)
     ).resolves.toBe(ExitCode.Network);
     expect(install).toHaveBeenCalledOnce();
     expect(output.stderrText()).toContain('stopped after 1 of 2 pets');
-    expect(output.stderrText()).toContain('package unavailable');
+  });
 
-    secondPetFails = false;
-    await expect(
-      run(['add-collection', 'forest-friends'], output)
-    ).resolves.toBe(ExitCode.Success);
-    expect(install).toHaveBeenCalledTimes(3);
-    expect(downloadPet.mock.calls.map(([id]) => id)).toEqual([
-      'sleepy-fox',
-      'boba-bear',
-      'sleepy-fox',
-      'boba-bear',
-    ]);
+  it('rejects removed aliases and invalid arguments', async () => {
+    for (const args of [
+      ['add', 'sleepy-fox'],
+      ['add-collection', 'forest-friends'],
+      ['install'],
+      ['install', 'Fox 2'],
+      ['list', '--json'],
+    ]) {
+      await expect(run(args, dependencies())).resolves.toBe(ExitCode.Usage);
+    }
   });
 });
 
-function download(id: string): InstallDownload {
-  const bytes = petArchive(id);
-  return {
-    bytes,
-    metadata: {
-      petId: id,
-      petVersion: 1,
-      revisionId: 'rev_1',
-      sha256: '0'.repeat(64),
-      sizeBytes: bytes.byteLength,
-    },
-  };
-}
-
-function outputs(overrides: Record<string, unknown> = {}) {
+function dependencies(overrides: Record<string, unknown> = {}) {
   let stdout = '';
   let stderr = '';
   return {
+    catalog: vi.fn(async () => ({ catalog: fixtureCatalog(), discoveredApi })),
+    collectionManifest: vi.fn(async () => ({
+      collectionSlug: 'forest-friends',
+      petSlugs: ['sleepy-fox', 'boba-bear'],
+    })),
+    discover: vi.fn(async () => discoveredApi),
+    download: vi.fn(async (pet: CatalogPet) => installDownload(pet.slug)),
+    install: vi.fn(async () => undefined),
     recover: vi.fn(async () => undefined),
+    report: vi.fn(async () => true),
     stderr: {
       write: (value: string | Uint8Array) => {
         stderr += value;
       },
     },
+    stderrText: () => stderr,
     stdout: {
       write: (value: string | Uint8Array) => {
         stdout += value;
       },
     },
-    stderrText: () => stderr,
     stdoutText: () => stdout,
     ...overrides,
   } as any;
 }
 
-function petArchive(id: string): Uint8Array {
+function fixtureCatalog(): PublicPetCatalog {
+  const pets = [
+    catalogPet('sleepy-fox', 'Sleepy Fox'),
+    catalogPet('boba-bear', 'Boba Bear'),
+  ];
+  return {
+    assetBase: 'https://cdn.pets.example/',
+    generatedAt: '2026-07-19T00:00:00.000Z',
+    pets,
+    schemaVersion: 1,
+    total: pets.length,
+  };
+}
+
+function catalogPet(slug: string, displayName: string): CatalogPet {
+  const archive = petArchive(slug);
+  return {
+    assets: {
+      byteSize: {
+        manifest: 1,
+        package: archive.byteLength,
+        poster: 1,
+        spritesheet: 3,
+      },
+      prefix: 'revisions/0197c001-7c00-7000-8000-000000000001/',
+      sha256: {
+        manifest: 'a'.repeat(64),
+        package: createHash('sha256').update(archive).digest('hex'),
+        poster: 'b'.repeat(64),
+        spritesheet: 'c'.repeat(64),
+      },
+      spritesheetFile: 'spritesheet.png',
+    },
+    author: 'Mira',
+    displayName,
+    kind: 'creature',
+    revision: { id: '0197c001-7c00-7000-8000-000000000001', number: 1 },
+    slug,
+  };
+}
+
+function installDownload(slug: string): InstallDownload {
+  const bytes = petArchive(slug);
+  return {
+    bytes,
+    metadata: {
+      petSlug: slug,
+      revisionId: '0197c001-7c00-7000-8000-000000000001',
+      revisionNumber: 1,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+      sizeBytes: bytes.byteLength,
+    },
+  };
+}
+
+function petArchive(slug: string): Uint8Array {
   return zipSync({
     'pet.json': strToU8(
-      JSON.stringify({ id, spritesheetPath: 'spritesheet.png' })
+      JSON.stringify({ id: slug, spritesheetPath: 'spritesheet.png' })
     ),
     'spritesheet.png': new Uint8Array([1, 2, 3]),
   });

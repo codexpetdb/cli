@@ -1,25 +1,58 @@
 import { createHash } from 'node:crypto';
 import { CliError, ExitCode } from './errors.js';
+import { isPublicId } from './pet-id.js';
 
 export const DEFAULT_SITE_URL = 'https://codexpetdb.com';
 export const DISCOVERY_PATH = '/.well-known/codexpetdb.json';
+export const MAX_CATALOG_BYTES = 10 * 1024 * 1024;
 export const MAX_PACKAGE_BYTES = 25 * 1024 * 1024;
 
 const REQUEST_TIMEOUT_MS = 30_000;
-const SHA256_PATTERN = /^[a-f0-9]{64}$/i;
-const REVISION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const INSTALL_REPORT_TIMEOUT_MS = 2_000;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
+const REVISION_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const RFC3339_DATE_TIME_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u;
 
-export interface InstallMetadata {
-  petId: string;
-  revisionId: string;
-  sha256: string;
-  petVersion: 1 | 2;
-  sizeBytes: number;
+export interface CatalogPet {
+  assets: {
+    byteSize: CatalogAssetValues<number>;
+    prefix: string;
+    sha256: CatalogAssetValues<string>;
+    spritesheetFile: 'spritesheet.png' | 'spritesheet.webp';
+  };
+  author: string;
+  displayName: string;
+  kind: 'character' | 'creature' | 'object';
+  revision: { id: string; number: number };
+  slug: string;
+}
+
+interface CatalogAssetValues<T> {
+  manifest: T;
+  package: T;
+  poster: T;
+  spritesheet: T;
+}
+
+export interface PublicPetCatalog {
+  assetBase: string;
+  generatedAt: string;
+  pets: CatalogPet[];
+  schemaVersion: 1;
+  total: number;
 }
 
 export interface InstallDownload {
   bytes: Uint8Array;
-  metadata: InstallMetadata;
+  metadata: {
+    petSlug: string;
+    revisionId: string;
+    revisionNumber: number;
+    sha256: string;
+    sizeBytes: number;
+  };
 }
 
 export interface DownloadOptions {
@@ -37,15 +70,9 @@ interface DiscoveryDocument {
     openApiUrl: string;
     supportedVersions: string[];
   };
-  assets: {
-    origin: string;
-  };
+  assets: { delivery: 'cdn' | 'proxy'; origin: string };
   catalogUrl: string;
-  cli?: {
-    binary: 'petdb';
-    minVersion: string;
-    packageName: 'petdb';
-  };
+  cli?: { binary: 'petdb'; minVersion: string; packageName: 'petdb' };
   docsUrl: string;
   product: 'CodexPetDB';
   schemaVersion: 1;
@@ -54,7 +81,10 @@ interface DiscoveryDocument {
 
 export interface DiscoveredApi {
   apiBaseUrl: URL;
+  assetDelivery: 'cdn' | 'proxy';
   assetOrigin: URL;
+  catalogUrl: URL;
+  siteUrl: URL;
 }
 
 export function parseSiteUrl(siteUrl: string): URL {
@@ -68,7 +98,6 @@ export function parseSiteUrl(siteUrl: string): URL {
       { cause: error }
     );
   }
-
   if (
     base.protocol !== 'https:' &&
     !(base.protocol === 'http:' && isLocalHostname(base.hostname))
@@ -93,181 +122,146 @@ export function parseSiteUrl(siteUrl: string): URL {
   return base;
 }
 
-export function buildInstallUrl(apiBaseUrl: URL, petId: string): URL {
-  const url = new URL(
-    `${apiBaseUrl.pathname.replace(/\/$/, '')}/pets/${encodeURIComponent(petId)}/install`,
-    apiBaseUrl.origin
-  );
-  url.searchParams.set('client', 'petdb');
-  return url;
-}
-
 export async function discoverApi(
   siteUrl: string,
   options: Pick<DownloadOptions, 'clientVersion' | 'fetchImpl' | 'signal'> = {}
 ): Promise<DiscoveredApi> {
   const site = parseSiteUrl(siteUrl);
-  const fetchImpl = options.fetchImpl ?? fetch;
-  const discoveryUrl = new URL(DISCOVERY_PATH, site.origin);
-  let response: Response;
-  try {
-    response = await fetchImpl(discoveryUrl, {
-      headers: {
-        Accept: 'application/json',
-        'User-Agent': `petdb/${options.clientVersion ?? '1.0.0'}`,
-      },
-      redirect: 'error',
-      signal: options.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-  } catch (error) {
-    throw new CliError(
-      `Unable to discover CodexPetDB: ${errorMessage(error)}`,
-      ExitCode.Network,
-      { cause: error }
-    );
-  }
+  const discoveryUrl = new URL(DISCOVERY_PATH, site);
+  const response = await request(discoveryUrl, 'application/json', options);
   if (!response.ok) {
     throw new CliError(
       `CodexPetDB discovery failed with HTTP ${response.status}.`,
       ExitCode.Network
     );
   }
-  if (
-    response.redirected ||
-    (response.url !== '' && response.url !== discoveryUrl.href)
-  ) {
-    throw new CliError(
-      'CodexPetDB discovery attempted an unsafe redirect.',
-      ExitCode.Network
-    );
-  }
-
-  let value: unknown;
-  try {
-    value = await response.json();
-  } catch (error) {
-    throw new CliError(
-      'CodexPetDB discovery returned invalid JSON.',
-      ExitCode.Integrity,
-      { cause: error }
-    );
-  }
-  return validateDiscovery(value, site, options.clientVersion);
+  assertNoRedirect(response, discoveryUrl, 'CodexPetDB discovery');
+  return validateDiscovery(
+    await readJson(response, 'CodexPetDB discovery'),
+    site,
+    options.clientVersion
+  );
 }
 
-export async function downloadInstallPackage(
-  petId: string,
+export async function downloadCatalog(
   options: DownloadOptions = {}
-): Promise<InstallDownload> {
-  const fetchImpl = options.fetchImpl ?? fetch;
-  const apiBaseUrl =
+): Promise<{ catalog: PublicPetCatalog; discoveredApi: DiscoveredApi }> {
+  const discoveredApi =
     options.discoveredApi ??
     (await discoverApi(
       options.siteUrl ?? process.env.PETDB_SITE_URL ?? DEFAULT_SITE_URL,
       options
     ));
-  const url = buildInstallUrl(apiBaseUrl.apiBaseUrl, petId);
-
-  let metadataResponse: Response;
-  try {
-    metadataResponse = await fetchImpl(url, {
-      headers: {
-        Accept: 'application/json',
-        'User-Agent': `petdb/${options.clientVersion ?? '1.0.0'}`,
-      },
-      redirect: 'error',
-      signal: options.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-  } catch (error) {
-    throw new CliError(
-      `Unable to download pet '${petId}': ${errorMessage(error)}`,
-      ExitCode.Network,
-      { cause: error }
-    );
-  }
-
-  if (!metadataResponse.ok) {
-    throw new CliError(
-      `Pet install metadata failed with HTTP ${metadataResponse.status}.`,
-      ExitCode.Network
-    );
-  }
-  if (
-    metadataResponse.redirected ||
-    (metadataResponse.url !== '' && metadataResponse.url !== url.href)
-  ) {
-    throw new CliError(
-      'Pet install metadata attempted an unsafe redirect.',
-      ExitCode.Network
-    );
-  }
-
-  let metadataValue: unknown;
-  try {
-    metadataValue = await metadataResponse.json();
-  } catch (error) {
-    throw new CliError(
-      'Pet install metadata returned invalid JSON.',
-      ExitCode.Integrity,
-      { cause: error }
-    );
-  }
-  const { metadata, packageUrl } = readInstallMetadata(
-    metadataValue,
-    petId,
-    apiBaseUrl.assetOrigin
+  const response = await request(
+    discoveredApi.catalogUrl,
+    'application/json',
+    options
   );
-
-  let response: Response;
-  try {
-    response = await fetchImpl(packageUrl, {
-      headers: {
-        Accept: 'application/zip',
-        'User-Agent': `petdb/${options.clientVersion ?? '1.0.0'}`,
-      },
-      redirect: 'error',
-      signal: options.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-  } catch (error) {
+  if (!response.ok) {
     throw new CliError(
-      `Unable to download pet '${petId}': ${errorMessage(error)}`,
-      ExitCode.Network,
-      { cause: error }
+      `Pet catalog failed with HTTP ${response.status}.`,
+      ExitCode.Network
     );
   }
+  assertNoRedirect(response, discoveredApi.catalogUrl, 'Pet catalog');
+  const contentType = response.headers.get('content-type')?.split(';', 1)[0];
+  if (contentType !== 'application/json') {
+    throw integrityError('Pet catalog has an unexpected Content-Type.');
+  }
+  if (!response.body) throw integrityError('Pet catalog response is empty.');
+  const bytes = await readBoundedBody(
+    response.body,
+    MAX_CATALOG_BYTES,
+    'Pet catalog'
+  );
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+  } catch (error) {
+    throw integrityError('Pet catalog returned invalid UTF-8 JSON.', error);
+  }
+  return { catalog: validateCatalog(value, discoveredApi), discoveredApi };
+}
+
+export function findCatalogPet(
+  catalog: PublicPetCatalog,
+  slug: string
+): CatalogPet {
+  const pet = catalog.pets.find((candidate) => candidate.slug === slug);
+  if (!pet) {
+    throw new CliError(`Unknown pet slug '${slug}'.`, ExitCode.Network);
+  }
+  return pet;
+}
+
+export async function downloadInstallPackage(
+  pet: CatalogPet,
+  options: DownloadOptions & { discoveredApi: DiscoveredApi }
+): Promise<InstallDownload> {
+  const packageUrl = assetUrl(
+    options.discoveredApi,
+    `${pet.assets.prefix}${pet.slug}.zip`
+  );
+  const response = await request(packageUrl, 'application/zip', options);
   if (!response.ok) {
     throw new CliError(
       `Pet download failed with HTTP ${response.status}.`,
       ExitCode.Network
     );
   }
-  if (
-    response.redirected ||
-    (response.url !== '' && response.url !== packageUrl.href)
-  ) {
-    throw new CliError(
-      'Pet download attempted an unsafe redirect.',
-      ExitCode.Network
+  assertNoRedirect(response, packageUrl, 'Pet download');
+  const contentType = response.headers.get('content-type')?.split(';', 1)[0];
+  if (contentType !== 'application/zip') {
+    throw integrityError('Pet package has an unexpected Content-Type.');
+  }
+  const expectedBytes = pet.assets.byteSize.package;
+  if (expectedBytes > MAX_PACKAGE_BYTES) {
+    throw integrityError(`Pet package exceeds ${MAX_PACKAGE_BYTES} bytes.`);
+  }
+  if (!response.body) throw integrityError('Pet package response is empty.');
+  const bytes = await readExactBody(
+    response.body,
+    expectedBytes,
+    'Pet package'
+  );
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  if (sha256 !== pet.assets.sha256.package) {
+    throw integrityError(
+      'Downloaded package SHA-256 does not match the catalog.'
     );
   }
-  validatePackageHeaders(response.headers, metadata);
-  if (!response.body) {
-    throw new CliError(
-      'Pet download returned an empty response body.',
-      ExitCode.Integrity
-    );
-  }
+  return {
+    bytes,
+    metadata: {
+      petSlug: pet.slug,
+      revisionId: pet.revision.id,
+      revisionNumber: pet.revision.number,
+      sha256,
+      sizeBytes: expectedBytes,
+    },
+  };
+}
 
-  const bytes = await readBoundedBody(response.body, metadata.sizeBytes);
-  const actualSha256 = createHash('sha256').update(bytes).digest('hex');
-  if (actualSha256 !== metadata.sha256) {
-    throw new CliError(
-      'Downloaded package SHA-256 does not match the server metadata.',
-      ExitCode.Integrity
-    );
+export async function reportInstall(
+  slug: string,
+  discoveredApi: DiscoveredApi,
+  options: Pick<DownloadOptions, 'clientVersion' | 'fetchImpl'> = {}
+): Promise<boolean> {
+  const url = new URL(
+    `${discoveredApi.apiBaseUrl.pathname.replace(/\/$/u, '')}/pets/${encodeURIComponent(slug)}/installs`,
+    discoveredApi.apiBaseUrl.origin
+  );
+  try {
+    const response = await (options.fetchImpl ?? fetch)(url, {
+      headers: { 'User-Agent': userAgent(options.clientVersion) },
+      method: 'POST',
+      redirect: 'error',
+      signal: AbortSignal.timeout(INSTALL_REPORT_TIMEOUT_MS),
+    });
+    return response.status === 204;
+  } catch {
+    return false;
   }
-
-  return { bytes, metadata };
 }
 
 function validateDiscovery(
@@ -275,31 +269,35 @@ function validateDiscovery(
   site: URL,
   clientVersion = '1.0.0'
 ): DiscoveredApi {
-  if (!value || typeof value !== 'object') {
-    throw invalidDiscovery();
-  }
+  if (!isRecord(value)) throw invalidDiscovery();
   const document = value as Partial<DiscoveryDocument>;
-  const api = document.api;
   if (
-    !hasExactKeys(document, [
+    !hasExactKeys(value, [
       'api',
       'assets',
       'catalogUrl',
+      ...(document.cli === undefined ? [] : ['cli']),
       'docsUrl',
       'product',
       'schemaVersion',
       'siteUrl',
-      ...(document.cli === undefined ? [] : ['cli']),
     ]) ||
     document.schemaVersion !== 1 ||
     document.product !== 'CodexPetDB' ||
-    typeof document.siteUrl !== 'string' ||
+    !isRecord(document.api) ||
+    !isRecord(document.assets) ||
+    !hasExactKeys(document.assets, ['delivery', 'origin']) ||
+    (document.assets.delivery !== 'cdn' &&
+      document.assets.delivery !== 'proxy') ||
+    typeof document.assets.origin !== 'string' ||
     typeof document.catalogUrl !== 'string' ||
     typeof document.docsUrl !== 'string' ||
-    !isRecord(document.assets) ||
-    !hasExactKeys(document.assets, ['origin']) ||
-    typeof document.assets.origin !== 'string' ||
-    !isRecord(api) ||
+    typeof document.siteUrl !== 'string'
+  ) {
+    throw invalidDiscovery();
+  }
+  const api = document.api;
+  if (
     !hasExactKeys(api, [
       'baseUrl',
       'currentVersion',
@@ -315,50 +313,250 @@ function validateDiscovery(
   ) {
     throw invalidDiscovery();
   }
-
-  const origin = site.origin;
-  const declaredSite = exactUrl(document.siteUrl, `${origin}/`);
-  const apiBase = exactUrl(api.baseUrl, `${origin}/api/v1/pub`);
+  const declaredSite = exactUrl(document.siteUrl, site.href);
+  const apiBaseUrl = exactUrl(api.baseUrl, `${site.origin}/api/v1/pub`);
   const assetOrigin = parseAssetOrigin(document.assets.origin, site);
+  const catalogUrl = parseCatalogUrl(
+    document.catalogUrl,
+    site,
+    assetOrigin,
+    document.assets.delivery
+  );
   if (
     !declaredSite ||
-    !apiBase ||
+    !apiBaseUrl ||
     !assetOrigin ||
+    !catalogUrl ||
     !parseOpenApiUrl(api.openApiUrl, site, assetOrigin) ||
-    !exactUrl(document.catalogUrl, `${origin}/api/v1/pub/pet-catalog`) ||
-    !exactUrl(document.docsUrl, `${origin}/en/docs`)
+    !exactUrl(document.docsUrl, `${site.origin}/en/docs`)
   ) {
+    throw invalidDiscovery();
+  }
+  validateCli(document.cli, clientVersion);
+  return {
+    apiBaseUrl,
+    assetDelivery: document.assets.delivery,
+    assetOrigin,
+    catalogUrl,
+    siteUrl: declaredSite,
+  };
+}
+
+function validateCatalog(
+  value: unknown,
+  discoveredApi: DiscoveredApi
+): PublicPetCatalog {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'assetBase',
+      'generatedAt',
+      'pets',
+      'schemaVersion',
+      'total',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    typeof value.assetBase !== 'string' ||
+    !exactUrl(value.assetBase, `${discoveredApi.assetOrigin.origin}/`) ||
+    typeof value.generatedAt !== 'string' ||
+    !RFC3339_DATE_TIME_PATTERN.test(value.generatedAt) ||
+    !Number.isFinite(Date.parse(value.generatedAt)) ||
+    typeof value.total !== 'number' ||
+    !Number.isSafeInteger(value.total) ||
+    !Array.isArray(value.pets) ||
+    value.total !== value.pets.length
+  ) {
+    throw invalidCatalog();
+  }
+  const pets = value.pets.map(validateCatalogPet);
+  for (let index = 0; index < pets.length; index += 1) {
+    if (
+      index > 0 &&
+      (pets[index - 1] as CatalogPet).slug >= (pets[index] as CatalogPet).slug
+    ) {
+      throw invalidCatalog();
+    }
+  }
+  return { ...value, pets } as PublicPetCatalog;
+}
+
+function validateCatalogPet(value: unknown): CatalogPet {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'assets',
+      'author',
+      'displayName',
+      'kind',
+      'revision',
+      'slug',
+    ]) ||
+    typeof value.slug !== 'string' ||
+    !isPublicId(value.slug) ||
+    typeof value.displayName !== 'string' ||
+    value.displayName.length === 0 ||
+    typeof value.author !== 'string' ||
+    !['character', 'creature', 'object'].includes(String(value.kind)) ||
+    !isRecord(value.revision) ||
+    !hasExactKeys(value.revision, ['id', 'number']) ||
+    typeof value.revision.id !== 'string' ||
+    !REVISION_ID_PATTERN.test(value.revision.id) ||
+    typeof value.revision.number !== 'number' ||
+    !Number.isSafeInteger(value.revision.number) ||
+    value.revision.number <= 0 ||
+    !isRecord(value.assets) ||
+    !hasExactKeys(value.assets, [
+      'byteSize',
+      'prefix',
+      'sha256',
+      'spritesheetFile',
+    ]) ||
+    value.assets.prefix !== `revisions/${value.revision.id}/` ||
+    (value.assets.spritesheetFile !== 'spritesheet.png' &&
+      value.assets.spritesheetFile !== 'spritesheet.webp') ||
+    !validAssetValues(
+      value.assets.byteSize,
+      (item) =>
+        typeof item === 'number' && Number.isSafeInteger(item) && item > 0
+    ) ||
+    !validAssetValues(
+      value.assets.sha256,
+      (item) => typeof item === 'string' && SHA256_PATTERN.test(item)
+    )
+  ) {
+    throw invalidCatalog();
+  }
+  return value as unknown as CatalogPet;
+}
+
+function validAssetValues(
+  value: unknown,
+  predicate: (item: unknown) => boolean
+): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ['manifest', 'package', 'poster', 'spritesheet']) &&
+    Object.values(value).every(predicate)
+  );
+}
+
+function assetUrl(discovered: DiscoveredApi, key: string): URL {
+  if (
+    !/^revisions\/[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/[A-Za-z0-9._~*-]+\.zip$/u.test(
+      key
+    )
+  ) {
+    throw integrityError('Catalog package key is invalid.');
+  }
+  if (discovered.assetDelivery === 'cdn') {
+    return new URL(key, discovered.assetOrigin);
+  }
+  const url = new URL('/api/storage/file', discovered.siteUrl);
+  url.searchParams.set('key', key);
+  return url;
+}
+
+async function request(
+  url: URL,
+  accept: string,
+  options: Pick<DownloadOptions, 'clientVersion' | 'fetchImpl' | 'signal'>
+): Promise<Response> {
+  try {
+    return await (options.fetchImpl ?? fetch)(url, {
+      headers: {
+        Accept: accept,
+        'User-Agent': userAgent(options.clientVersion),
+      },
+      redirect: 'error',
+      signal: options.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
     throw new CliError(
-      'CodexPetDB discovery contains an unsafe API base URL.',
-      ExitCode.Integrity
+      `Request failed: ${errorMessage(error)}`,
+      ExitCode.Network,
+      {
+        cause: error,
+      }
     );
   }
+}
 
-  if (document.cli !== undefined) {
-    if (
-      !isRecord(document.cli) ||
-      !hasExactKeys(document.cli, ['binary', 'minVersion', 'packageName']) ||
-      document.cli.binary !== 'petdb' ||
-      document.cli.packageName !== 'petdb'
-    ) {
-      throw invalidDiscovery();
-    }
-    const minVersion = document.cli.minVersion;
-    if (
-      typeof minVersion !== 'string' ||
-      !isSemver(minVersion) ||
-      !isSemver(clientVersion)
-    ) {
-      throw invalidDiscovery();
-    }
-    if (compareSemver(clientVersion, minVersion) < 0) {
-      throw new CliError(
-        `CodexPetDB requires petdb ${minVersion} or newer.`,
-        ExitCode.Integrity
-      );
-    }
+function assertNoRedirect(
+  response: Response,
+  expected: URL,
+  label: string
+): void {
+  if (
+    response.redirected ||
+    (response.url !== '' && response.url !== expected.href)
+  ) {
+    throw new CliError(
+      `${label} attempted an unsafe redirect.`,
+      ExitCode.Network
+    );
   }
-  return { apiBaseUrl: apiBase, assetOrigin };
+}
+
+async function readJson(response: Response, label: string): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch (error) {
+    throw integrityError(`${label} returned invalid JSON.`, error);
+  }
+}
+
+async function readExactBody(
+  body: ReadableStream<Uint8Array>,
+  expected: number,
+  label: string
+): Promise<Uint8Array> {
+  const bytes = await readBoundedBody(body, expected, label);
+  if (bytes.byteLength !== expected) {
+    throw integrityError(`${label} size does not match the catalog.`);
+  }
+  return bytes;
+}
+
+async function readBoundedBody(
+  body: ReadableStream<Uint8Array>,
+  maximum: number,
+  label: string
+): Promise<Uint8Array> {
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maximum)
+        throw integrityError(`${label} exceeds its size limit.`);
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const result = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return result;
+}
+
+function parseCatalogUrl(
+  value: string,
+  site: URL,
+  assetOrigin: URL | null,
+  delivery: 'cdn' | 'proxy'
+): URL | null {
+  if (!assetOrigin) return null;
+  if (delivery === 'cdn') {
+    return exactUrl(value, `${assetOrigin.origin}/catalogs/v1/pets.json`);
+  }
+  return exactStorageUrl(value, site, 'catalogs/v1/pets.json');
 }
 
 function parseOpenApiUrl(
@@ -369,29 +567,47 @@ function parseOpenApiUrl(
   try {
     const parsed = new URL(value);
     if (
-      parsed.hash !== '' ||
-      parsed.username !== '' ||
-      parsed.password !== ''
+      parsed.origin === assetOrigin.origin &&
+      /^\/contracts\/public\/v\d+\.\d+\.\d+\/openapi\.json$/u.test(
+        parsed.pathname
+      ) &&
+      parsed.search === ''
     ) {
-      return null;
+      return parsed;
     }
-    if (assetOrigin.origin !== site.origin) {
-      return parsed.origin === assetOrigin.origin &&
-        /^\/contracts\/public\/v\d+\.\d+\.\d+\/openapi\.json$/u.test(
-          parsed.pathname
-        ) &&
-        parsed.search === ''
-        ? parsed
-        : null;
-    }
+  } catch {
+    return null;
+  }
+  return exactStorageUrlFromPattern(
+    value,
+    site,
+    /^contracts\/public\/v\d+\.\d+\.\d+\/openapi\.json$/u
+  );
+}
+
+function exactStorageUrl(value: string, site: URL, key: string): URL | null {
+  return exactStorageUrlFromPattern(
+    value,
+    site,
+    new RegExp(`^${escapeRegex(key)}$`, 'u')
+  );
+}
+
+function exactStorageUrlFromPattern(
+  value: string,
+  site: URL,
+  keyPattern: RegExp
+): URL | null {
+  try {
+    const parsed = new URL(value);
     const keys = [...parsed.searchParams.keys()];
-    const objectKey = parsed.searchParams.get('key');
+    const key = parsed.searchParams.get('key');
     return parsed.origin === site.origin &&
       parsed.pathname === '/api/storage/file' &&
       keys.length === 1 &&
       keys[0] === 'key' &&
-      objectKey !== null &&
-      /^contracts\/public\/v\d+\.\d+\.\d+\/openapi\.json$/u.test(objectKey)
+      key !== null &&
+      keyPattern.test(key)
       ? parsed
       : null;
   } catch {
@@ -399,11 +615,47 @@ function parseOpenApiUrl(
   }
 }
 
-function invalidDiscovery(): CliError {
-  return new CliError(
-    'CodexPetDB discovery document has an unsupported shape.',
-    ExitCode.Integrity
-  );
+function parseAssetOrigin(value: string, site: URL): URL | null {
+  try {
+    const origin = new URL(value);
+    if (
+      origin.username !== '' ||
+      origin.password !== '' ||
+      origin.pathname !== '/' ||
+      origin.search !== '' ||
+      origin.hash !== ''
+    ) {
+      return null;
+    }
+    if (origin.protocol === 'https:') return origin;
+    return origin.protocol === 'http:' &&
+      isLocalHostname(origin.hostname) &&
+      origin.origin === site.origin
+      ? origin
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function validateCli(value: unknown, clientVersion: string): void {
+  if (value === undefined) return;
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['binary', 'minVersion', 'packageName']) ||
+    value.binary !== 'petdb' ||
+    value.packageName !== 'petdb' ||
+    typeof value.minVersion !== 'string' ||
+    !isSemver(value.minVersion) ||
+    !isSemver(clientVersion)
+  ) {
+    throw invalidDiscovery();
+  }
+  if (compareSemver(clientVersion, value.minVersion) < 0) {
+    throw integrityError(
+      `CodexPetDB requires petdb ${value.minVersion} or newer.`
+    );
+  }
 }
 
 function exactUrl(value: string, expected: string): URL | null {
@@ -413,6 +665,20 @@ function exactUrl(value: string, expected: string): URL | null {
   } catch {
     return null;
   }
+}
+
+function invalidDiscovery(): CliError {
+  return integrityError(
+    'CodexPetDB discovery document has an unsupported shape.'
+  );
+}
+
+function invalidCatalog(): CliError {
+  return integrityError('Pet catalog has an unsupported shape.');
+}
+
+function integrityError(message: string, cause?: unknown): CliError {
+  return new CliError(message, ExitCode.Integrity, { cause });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -429,7 +695,7 @@ function hasExactKeys(value: object, expectedKeys: readonly string[]): boolean {
 }
 
 function isLocalHostname(hostname: string): boolean {
-  const normalized = hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '');
+  const normalized = hostname.replace(/^\[|\]$/gu, '').replace(/\.$/u, '');
   return (
     normalized === 'localhost' ||
     normalized === '127.0.0.1' ||
@@ -437,34 +703,8 @@ function isLocalHostname(hostname: string): boolean {
   );
 }
 
-function parseAssetOrigin(value: string, site: URL): URL | null {
-  try {
-    const origin = new URL(value);
-    if (
-      origin.username !== '' ||
-      origin.password !== '' ||
-      origin.pathname !== '/' ||
-      origin.search !== '' ||
-      origin.hash !== ''
-    ) {
-      return null;
-    }
-    if (origin.protocol === 'https:') return origin;
-    if (
-      origin.protocol === 'http:' &&
-      isLocalHostname(origin.hostname) &&
-      origin.origin === site.origin
-    ) {
-      return origin;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
 function isSemver(value: string): boolean {
-  return /^\d+\.\d+\.\d+$/.test(value);
+  return /^\d+\.\d+\.\d+$/u.test(value);
 }
 
 function compareSemver(left: string, right: string): number {
@@ -477,187 +717,12 @@ function compareSemver(left: string, right: string): number {
   return 0;
 }
 
-function readInstallMetadata(
-  value: unknown,
-  requestedPetId: string,
-  assetOrigin: URL
-): { metadata: InstallMetadata; packageUrl: URL } {
-  if (!isRecord(value) || !isRecord(value.data)) throw invalidInstallMetadata();
-  const data = value.data;
-  const packageValue = data.package;
-  if (
-    !hasExactKeys(data, ['formatVersion', 'package', 'petId', 'revisionId']) ||
-    !isRecord(packageValue) ||
-    !hasExactKeys(packageValue, [
-      'byteSize',
-      'contentType',
-      'filename',
-      'sha256',
-      'url',
-    ])
-  ) {
-    throw invalidInstallMetadata();
-  }
-  const petId = data.petId;
-  const revisionId = data.revisionId;
-  const sha256 =
-    typeof packageValue.sha256 === 'string'
-      ? packageValue.sha256.toLowerCase()
-      : '';
-  const petVersionValue = data.formatVersion;
-  const sizeBytes = packageValue.byteSize;
-
-  if (typeof petId !== 'string' || petId !== requestedPetId) {
-    throw new CliError(
-      'Download metadata pet id does not match the requested pet.',
-      ExitCode.Integrity
-    );
-  }
-  if (typeof revisionId !== 'string' || !REVISION_ID_PATTERN.test(revisionId)) {
-    throw new CliError(
-      'Download metadata contains an invalid revision id.',
-      ExitCode.Integrity
-    );
-  }
-  if (!SHA256_PATTERN.test(sha256)) {
-    throw new CliError(
-      'Download metadata contains an invalid SHA-256.',
-      ExitCode.Integrity
-    );
-  }
-  if (petVersionValue !== 1 && petVersionValue !== 2) {
-    throw new CliError(
-      'Download metadata contains an unsupported pet version.',
-      ExitCode.Integrity
-    );
-  }
-
-  if (
-    typeof sizeBytes !== 'number' ||
-    !Number.isSafeInteger(sizeBytes) ||
-    sizeBytes <= 0 ||
-    sizeBytes > MAX_PACKAGE_BYTES
-  ) {
-    throw new CliError(
-      `Pet package must be between 1 and ${MAX_PACKAGE_BYTES} bytes.`,
-      ExitCode.Integrity
-    );
-  }
-
-  if (
-    packageValue.contentType !== 'application/zip' ||
-    packageValue.filename !== `${petId}.zip` ||
-    typeof packageValue.url !== 'string'
-  ) {
-    throw invalidInstallMetadata();
-  }
-  let packageUrl: URL;
-  try {
-    packageUrl = new URL(packageValue.url);
-  } catch {
-    throw invalidInstallMetadata();
-  }
-  if (
-    packageUrl.origin !== assetOrigin.origin ||
-    packageUrl.username !== '' ||
-    packageUrl.password !== '' ||
-    packageUrl.hash !== ''
-  ) {
-    throw new CliError(
-      'Pet package URL uses an origin not allowed by discovery.',
-      ExitCode.Integrity
-    );
-  }
-
-  return {
-    metadata: {
-      petId,
-      revisionId,
-      sha256,
-      petVersion: petVersionValue,
-      sizeBytes,
-    },
-    packageUrl,
-  };
+function userAgent(version = '1.0.0'): string {
+  return `petdb/${version}`;
 }
 
-function invalidInstallMetadata(): CliError {
-  return new CliError(
-    'Pet install metadata has an unsupported shape.',
-    ExitCode.Integrity
-  );
-}
-
-function validatePackageHeaders(
-  headers: Headers,
-  metadata: InstallMetadata
-): void {
-  const contentType = requiredHeader(headers, 'Content-Type').toLowerCase();
-  const contentLength = Number(requiredHeader(headers, 'Content-Length'));
-  if (contentType !== 'application/zip') {
-    throw new CliError(
-      'Pet package has an unexpected Content-Type.',
-      ExitCode.Integrity
-    );
-  }
-  if (contentLength !== metadata.sizeBytes) {
-    throw new CliError(
-      'Pet package Content-Length does not match install metadata.',
-      ExitCode.Integrity
-    );
-  }
-}
-
-function requiredHeader(headers: Headers, name: string): string {
-  const value = headers.get(name)?.trim();
-  if (!value) {
-    throw new CliError(
-      `Download response is missing the ${name} header.`,
-      ExitCode.Integrity
-    );
-  }
-  return value;
-}
-
-async function readBoundedBody(
-  body: ReadableStream<Uint8Array>,
-  expectedBytes: number
-): Promise<Uint8Array> {
-  const reader = body.getReader();
-  const result = new Uint8Array(expectedBytes);
-  let offset = 0;
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (offset + value.byteLength > expectedBytes) {
-        throw new CliError(
-          'Downloaded package is larger than Content-Length.',
-          ExitCode.Integrity
-        );
-      }
-      result.set(value, offset);
-      offset += value.byteLength;
-    }
-  } catch (error) {
-    if (error instanceof CliError) throw error;
-    throw new CliError(
-      `Unable to read pet package: ${errorMessage(error)}`,
-      ExitCode.Network,
-      { cause: error }
-    );
-  } finally {
-    reader.releaseLock();
-  }
-
-  if (offset !== expectedBytes) {
-    throw new CliError(
-      'Downloaded package size does not match Content-Length.',
-      ExitCode.Integrity
-    );
-  }
-  return result;
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 }
 
 function errorMessage(error: unknown): string {

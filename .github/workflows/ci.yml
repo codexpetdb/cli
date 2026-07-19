@@ -24,3 +24,8 @@ jobs:
       - run: pnpm test
       - run: pnpm build
       - run: pnpm pack:smoke
+      - run: mkdir -p .artifacts && pnpm pack --pack-destination .artifacts
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20.19.0
+      - run: PETDB_PACKED_TARBALL_DIR=.artifacts node scripts/pack-smoke.mjs

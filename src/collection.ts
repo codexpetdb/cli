@@ -12,9 +12,8 @@ export const MAX_COLLECTION_PETS = 100;
 const REQUEST_TIMEOUT_MS = 30_000;
 
 export interface CollectionInstallManifest {
-  collectionId: string;
-  collectionSlug?: string;
-  petIds: string[];
+  collectionSlug: string;
+  petSlugs: string[];
 }
 
 export function buildCollectionManifestUrl(
@@ -74,6 +73,13 @@ export async function downloadCollectionManifest(
       ExitCode.Network
     );
   }
+  const contentType = response.headers.get('content-type')?.split(';', 1)[0];
+  if (contentType !== 'application/json') {
+    throw new CliError(
+      'Collection manifest has an unexpected Content-Type.',
+      ExitCode.Integrity
+    );
+  }
 
   let value: unknown;
   try {
@@ -91,79 +97,39 @@ export async function downloadCollectionManifest(
 export function validateCollectionManifest(
   value: unknown,
   requestedCollectionId: string,
-  discoveredApi: DiscoveredApi
+  _discoveredApi: DiscoveredApi
 ): CollectionInstallManifest {
   if (
     !isRecord(value) ||
-    (!hasExactKeys(value, ['collectionId', 'pets', 'schemaVersion']) &&
-      !hasExactKeys(value, [
-        'collectionId',
-        'collectionSlug',
-        'pets',
-        'schemaVersion',
-      ])) ||
+    !hasExactKeys(value, ['collectionSlug', 'petSlugs', 'schemaVersion']) ||
     value.schemaVersion !== 1 ||
-    typeof value.collectionId !== 'string' ||
-    !isPublicId(value.collectionId) ||
-    (value.collectionSlug === undefined
-      ? value.collectionId !== requestedCollectionId
-      : value.collectionSlug !== requestedCollectionId) ||
-    !Array.isArray(value.pets) ||
-    value.pets.length > MAX_COLLECTION_PETS
+    value.collectionSlug !== requestedCollectionId ||
+    !Array.isArray(value.petSlugs) ||
+    value.petSlugs.length > MAX_COLLECTION_PETS
   ) {
     throw invalidManifest();
   }
 
-  const petIds: string[] = [];
+  const petSlugs: string[] = [];
   const seen = new Set<string>();
-  for (const pet of value.pets) {
-    if (
-      !isRecord(pet) ||
-      !hasExactKeys(pet, ['id', 'package']) ||
-      typeof pet.id !== 'string' ||
-      !isPublicId(pet.id) ||
-      typeof pet.package !== 'string'
-    ) {
+  for (const slug of value.petSlugs) {
+    if (typeof slug !== 'string' || !isPublicId(slug)) {
       throw invalidManifest();
     }
-    if (seen.has(pet.id)) {
+    if (seen.has(slug)) {
       throw new CliError(
-        `Collection manifest contains duplicate pet id '${pet.id}'.`,
+        `Collection manifest contains duplicate pet slug '${slug}'.`,
         ExitCode.Integrity
       );
     }
-    validatePackageUrl(pet.package, discoveredApi.assetOrigin);
-    seen.add(pet.id);
-    petIds.push(pet.id);
+    seen.add(slug);
+    petSlugs.push(slug);
   }
 
   return {
-    collectionId: value.collectionId,
-    ...(typeof value.collectionSlug === 'string'
-      ? { collectionSlug: value.collectionSlug }
-      : {}),
-    petIds,
+    collectionSlug: value.collectionSlug,
+    petSlugs,
   };
-}
-
-function validatePackageUrl(value: string, assetOrigin: URL): void {
-  let packageUrl: URL;
-  try {
-    packageUrl = new URL(value);
-  } catch {
-    throw invalidManifest();
-  }
-  if (
-    packageUrl.origin !== assetOrigin.origin ||
-    packageUrl.username !== '' ||
-    packageUrl.password !== '' ||
-    packageUrl.hash !== ''
-  ) {
-    throw new CliError(
-      'Collection manifest package URL uses an origin not allowed by discovery.',
-      ExitCode.Integrity
-    );
-  }
 }
 
 function invalidManifest(): CliError {

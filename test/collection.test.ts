@@ -10,23 +10,20 @@ import { type CliError, ExitCode } from '../src/errors.js';
 
 const discoveredApi: DiscoveredApi = {
   apiBaseUrl: new URL('https://pets.example/api/v1/pub'),
+  assetDelivery: 'cdn',
   assetOrigin: new URL('https://cdn.pets.example'),
+  catalogUrl: new URL('https://cdn.pets.example/catalogs/v1/pets.json'),
+  siteUrl: new URL('https://pets.example'),
 };
 
 describe('collection manifest', () => {
-  it('builds the fixed v1 collection manifest endpoint', () => {
+  it('uses the fixed v1 endpoint and preserves pet order', () => {
     expect(
       buildCollectionManifestUrl(discoveredApi.apiBaseUrl, 'forest-friends')
         .href
     ).toBe(
       'https://pets.example/api/v1/pub/collections/forest-friends/manifest'
     );
-  });
-
-  it('accepts empty and ordered manifests', () => {
-    expect(
-      validateCollectionManifest(manifest([]), 'forest-friends', discoveredApi)
-    ).toEqual({ collectionId: 'forest-friends', petIds: [] });
     expect(
       validateCollectionManifest(
         manifest(['sleepy-fox', 'boba-bear']),
@@ -34,34 +31,17 @@ describe('collection manifest', () => {
         discoveredApi
       )
     ).toEqual({
-      collectionId: 'forest-friends',
-      petIds: ['sleepy-fox', 'boba-bear'],
-    });
-  });
-
-  it('uses the slug as the requested identity while retaining the internal id', () => {
-    expect(
-      validateCollectionManifest(
-        {
-          ...manifest(['sleepy-fox']),
-          collectionId: 'collection-internal-019f74d5',
-          collectionSlug: 'forest-friends',
-        },
-        'forest-friends',
-        discoveredApi
-      )
-    ).toEqual({
-      collectionId: 'collection-internal-019f74d5',
       collectionSlug: 'forest-friends',
-      petIds: ['sleepy-fox'],
+      petSlugs: ['sleepy-fox', 'boba-bear'],
     });
   });
 
-  it('strictly rejects id mismatches, duplicate pets, extra keys, and oversized collections', () => {
+  it('rejects mismatches, duplicates, extras, invalid slugs, and oversized lists', () => {
     const cases = [
-      { ...manifest([]), collectionId: 'another-collection' },
+      { ...manifest([]), collectionSlug: 'other' },
       manifest(['sleepy-fox', 'sleepy-fox']),
       { ...manifest([]), extra: true },
+      manifest(['not safe']),
       manifest(
         Array.from(
           { length: MAX_COLLECTION_PETS + 1 },
@@ -70,33 +50,6 @@ describe('collection manifest', () => {
       ),
     ];
     for (const value of cases) {
-      expect(() =>
-        validateCollectionManifest(value, 'forest-friends', discoveredApi)
-      ).toThrowError(
-        expect.objectContaining<Partial<CliError>>({
-          exitCode: ExitCode.Integrity,
-        })
-      );
-    }
-  });
-
-  it('rejects invalid pet ids and package origins', () => {
-    for (const value of [
-      manifest(['not safe']),
-      {
-        ...manifest([]),
-        pets: [{ id: 'sleepy-fox', package: 'https://evil.example/fox.zip' }],
-      },
-      {
-        ...manifest([]),
-        pets: [
-          {
-            id: 'sleepy-fox',
-            package: 'https://user@cdn.pets.example/fox.zip',
-          },
-        ],
-      },
-    ]) {
       expect(() =>
         validateCollectionManifest(value, 'forest-friends', discoveredApi)
       ).toThrowError(
@@ -116,20 +69,11 @@ describe('collection manifest', () => {
         fetchImpl: vi.fn(async () => response) as typeof fetch,
       })
     ).rejects.toEqual(
-      expect.objectContaining<Partial<CliError>>({
-        exitCode: ExitCode.Network,
-      })
+      expect.objectContaining<Partial<CliError>>({ exitCode: ExitCode.Network })
     );
   });
 });
 
-function manifest(ids: string[]) {
-  return {
-    collectionId: 'forest-friends',
-    pets: ids.map((id) => ({
-      id,
-      package: `https://cdn.pets.example/packages/${id}.zip`,
-    })),
-    schemaVersion: 1,
-  };
+function manifest(petSlugs: string[]) {
+  return { collectionSlug: 'forest-friends', petSlugs, schemaVersion: 1 };
 }

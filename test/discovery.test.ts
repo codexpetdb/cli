@@ -1,178 +1,33 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import {
-  buildInstallUrl,
+  type CatalogPet,
   discoverApi,
+  downloadCatalog,
   downloadInstallPackage,
+  MAX_CATALOG_BYTES,
   MAX_PACKAGE_BYTES,
+  reportInstall,
 } from '../src/discovery.js';
 import { type CliError, ExitCode, type ExitCodeValue } from '../src/errors.js';
 
-describe('install discovery', () => {
-  it('builds the fixed v1 install metadata endpoint', () => {
-    expect(
-      buildInstallUrl(new URL('https://pets.example/api/v1/pub'), 'sleepy-fox')
-        .href
-    ).toBe(
-      'https://pets.example/api/v1/pub/pets/sleepy-fox/install?client=petdb'
-    );
-  });
-
-  it('downloads from the discovered asset origin after reading metadata', async () => {
-    const bytes = new TextEncoder().encode('package');
-    const fetchImpl = sequentialFetch(
-      metadataResponse(bytes),
-      packageResponse(bytes)
-    );
-
+describe('catalog discovery and downloads', () => {
+  it('accepts exact CDN discovery', async () => {
     await expect(
-      downloadInstallPackage('sleepy-fox', {
-        fetchImpl: fetchImpl as typeof fetch,
-        siteUrl: 'https://pets.example',
+      discoverApi('https://pets.example', {
+        fetchImpl: vi.fn(async () =>
+          Response.json(discovery())
+        ) as typeof fetch,
       })
-    ).resolves.toEqual({
-      bytes,
-      metadata: {
-        petId: 'sleepy-fox',
-        petVersion: 2,
-        revisionId: 'rev_123',
-        sha256: sha256(bytes),
-        sizeBytes: bytes.byteLength,
-      },
+    ).resolves.toMatchObject({
+      apiBaseUrl: new URL('https://pets.example/api/v1/pub'),
+      assetDelivery: 'cdn',
+      assetOrigin: new URL('https://cdn.pets.example'),
+      catalogUrl: new URL('https://cdn.pets.example/catalogs/v1/pets.json'),
     });
-    expect(fetchImpl).toHaveBeenNthCalledWith(
-      3,
-      new URL('https://cdn.pets.example/packages/sleepy-fox.zip'),
-      expect.objectContaining({ redirect: 'error' })
-    );
   });
 
-  it('rejects an asset URL outside the discovery allowlist', async () => {
-    const bytes = new Uint8Array([1, 2, 3]);
-    const fetchImpl = sequentialFetch(
-      metadataResponse(bytes, { url: 'https://evil.example/pet.zip' }),
-      packageResponse(bytes)
-    );
-    await expectFailure(
-      downloadInstallPackage('sleepy-fox', {
-        fetchImpl: fetchImpl as typeof fetch,
-        siteUrl: 'https://pets.example',
-      }),
-      ExitCode.Integrity
-    );
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
-  });
-
-  it('rejects redirects from both metadata and package requests', async () => {
-    const bytes = new Uint8Array([1]);
-    const redirectedMetadata = metadataResponse(bytes);
-    Object.defineProperty(redirectedMetadata, 'redirected', { value: true });
-    await expectFailure(
-      downloadInstallPackage('sleepy-fox', {
-        fetchImpl: sequentialFetch(redirectedMetadata) as typeof fetch,
-        siteUrl: 'https://pets.example',
-      }),
-      ExitCode.Network
-    );
-
-    const redirectedPackage = packageResponse(bytes);
-    Object.defineProperty(redirectedPackage, 'redirected', { value: true });
-    await expectFailure(
-      downloadInstallPackage('sleepy-fox', {
-        fetchImpl: sequentialFetch(
-          metadataResponse(bytes),
-          redirectedPackage
-        ) as typeof fetch,
-        siteUrl: 'https://pets.example',
-      }),
-      ExitCode.Network
-    );
-  });
-
-  it('rejects empty, oversized, length-mismatched, and hash-mismatched packages', async () => {
-    const cases = [
-      {
-        metadata: metadataResponse(new Uint8Array(), { sizeBytes: 0 }),
-        package: packageResponse(new Uint8Array()),
-      },
-      {
-        metadata: metadataResponse(new Uint8Array([1]), {
-          sizeBytes: MAX_PACKAGE_BYTES + 1,
-        }),
-        package: packageResponse(new Uint8Array([1])),
-      },
-      {
-        metadata: metadataResponse(new Uint8Array([1, 2, 3])),
-        package: packageResponse(new Uint8Array([1, 2, 3]), { sizeBytes: 2 }),
-      },
-      {
-        metadata: metadataResponse(new Uint8Array([1, 2, 3]), {
-          sha256: '0'.repeat(64),
-        }),
-        package: packageResponse(new Uint8Array([1, 2, 3])),
-      },
-    ];
-    for (const fixture of cases) {
-      await expectFailure(
-        downloadInstallPackage('sleepy-fox', {
-          fetchImpl: sequentialFetch(
-            fixture.metadata,
-            fixture.package
-          ) as typeof fetch,
-          siteUrl: 'https://pets.example',
-        }),
-        ExitCode.Integrity
-      );
-    }
-  });
-
-  it('rejects an unexpected package content type', async () => {
-    const bytes = new Uint8Array([1]);
-    await expectFailure(
-      downloadInstallPackage('sleepy-fox', {
-        fetchImpl: sequentialFetch(
-          metadataResponse(bytes),
-          packageResponse(bytes, { contentType: 'text/html' })
-        ) as typeof fetch,
-        siteUrl: 'https://pets.example',
-      }),
-      ExitCode.Integrity
-    );
-  });
-
-  it('rejects unsafe API and asset origins in discovery', async () => {
-    const invalidDocuments = [
-      discovery({
-        api: {
-          ...discovery().api,
-          baseUrl: 'https://evil.example/api/v1/pub',
-        },
-      }),
-      discovery({ assets: { origin: 'http://cdn.pets.example' } }),
-      discovery({ assets: { origin: 'https://cdn.pets.example/path' } }),
-      discovery({ assets: { origin: '//cdn.pets.example' } }),
-      discovery({ assets: { origin: 'https://user@cdn.pets.example' } }),
-      discovery({
-        api: {
-          ...discovery().api,
-          openApiUrl:
-            'https://evil.example/contracts/public/v1.0.0/openapi.json',
-        },
-      }),
-    ];
-    for (const document of invalidDocuments) {
-      await expectFailure(
-        discoverApi('https://pets.example', {
-          fetchImpl: vi.fn(async () =>
-            discoveryResponse(document)
-          ) as typeof fetch,
-        }),
-        ExitCode.Integrity
-      );
-    }
-  });
-
-  it('accepts exact local discovery with same-origin local assets', async () => {
+  it('accepts exact local proxy discovery', async () => {
     const document = discovery({
       api: {
         ...discovery().api,
@@ -180,52 +35,190 @@ describe('install discovery', () => {
         openApiUrl:
           'http://localhost:3000/api/storage/file?key=contracts%2Fpublic%2Fv1.0.0%2Fopenapi.json',
       },
-      assets: { origin: 'http://localhost:3000' },
-      catalogUrl: 'http://localhost:3000/api/v1/pub/pet-catalog',
+      assets: { delivery: 'proxy', origin: 'http://localhost:3000' },
+      catalogUrl:
+        'http://localhost:3000/api/storage/file?key=catalogs%2Fv1%2Fpets.json',
       docsUrl: 'http://localhost:3000/en/docs',
       siteUrl: 'http://localhost:3000',
     });
     await expect(
       discoverApi('http://localhost:3000', {
-        fetchImpl: vi.fn(async () =>
-          discoveryResponse(document)
-        ) as typeof fetch,
+        fetchImpl: vi.fn(async () => Response.json(document)) as typeof fetch,
       })
-    ).resolves.toEqual({
-      apiBaseUrl: new URL('http://localhost:3000/api/v1/pub'),
-      assetOrigin: new URL('http://localhost:3000'),
-    });
+    ).resolves.toMatchObject({ assetDelivery: 'proxy' });
   });
 
-  it('enforces the exact discovery identity and CLI version', async () => {
-    for (const document of [
-      discovery({ product: 'codexpetdb' }),
-      discovery({ schemaVersion: 2 }),
-      discovery({ unexpected: true }),
-      discovery({
-        cli: { binary: 'petdb', minVersion: '2.0.0', packageName: 'petdb' },
+  it('downloads and validates a minified catalog regardless of Content-Length', async () => {
+    const value = catalog();
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json(discovery()))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(value), {
+          headers: {
+            'Content-Length': '1',
+            'Content-Type': 'application/json',
+          },
+        })
+      );
+    await expect(
+      downloadCatalog({ fetchImpl, siteUrl: 'https://pets.example' })
+    ).resolves.toMatchObject({ catalog: value });
+  });
+
+  it('limits catalog bytes after transparent decoding', async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(MAX_CATALOG_BYTES));
+        controller.enqueue(new Uint8Array([1]));
+        controller.close();
+      },
+    });
+    const discoveredApi = await discovered();
+    await expectFailure(
+      downloadCatalog({
+        discoveredApi,
+        fetchImpl: vi.fn(
+          async () =>
+            new Response(stream, {
+              headers: { 'Content-Type': 'application/json' },
+            })
+        ) as typeof fetch,
       }),
-    ]) {
+      ExitCode.Integrity
+    );
+  });
+
+  it('rejects a catalog with an unexpected Content-Type', async () => {
+    const discoveredApi = await discovered();
+
+    await expectFailure(
+      downloadCatalog({
+        discoveredApi,
+        fetchImpl: vi.fn(
+          async () =>
+            new Response(JSON.stringify(catalog()), {
+              headers: { 'Content-Type': 'text/plain' },
+            })
+        ) as typeof fetch,
+      }),
+      ExitCode.Integrity
+    );
+  });
+
+  it('rejects a catalog generatedAt value that is not RFC3339', async () => {
+    const value = catalog();
+    value.generatedAt = '2026-07-19';
+    const discoveredApi = await discovered();
+
+    await expectFailure(
+      downloadCatalog({
+        discoveredApi,
+        fetchImpl: vi.fn(async () => Response.json(value)) as typeof fetch,
+      }),
+      ExitCode.Integrity
+    );
+  });
+
+  it('accepts catalog slugs in deterministic code-point order', async () => {
+    const value = catalog();
+    value.pets = [
+      { ...value.pets[0], slug: 'a-b' },
+      { ...value.pets[0], slug: 'a_b' },
+    ];
+    value.total = value.pets.length;
+    const discoveredApi = await discovered();
+
+    await expect(
+      downloadCatalog({
+        discoveredApi,
+        fetchImpl: vi.fn(async () => Response.json(value)) as typeof fetch,
+      })
+    ).resolves.toMatchObject({ catalog: value });
+  });
+
+  it('derives and validates package bytes from the catalog', async () => {
+    const bytes = new TextEncoder().encode('package');
+    const pet = catalogPet(bytes);
+    const discoveredApi = await discovered();
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(bytes, { headers: { 'Content-Type': 'application/zip' } })
+    ) as typeof fetch;
+    await expect(
+      downloadInstallPackage(pet, { discoveredApi, fetchImpl })
+    ).resolves.toMatchObject({
+      bytes,
+      metadata: { petSlug: 'sleepy-fox', sizeBytes: bytes.byteLength },
+    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      new URL(
+        'https://cdn.pets.example/revisions/0197c001-7c00-7000-8000-000000000001/sleepy-fox.zip'
+      ),
+      expect.objectContaining({ redirect: 'error' })
+    );
+  });
+
+  it('rejects package size, hash, type, and decoded body mismatches', async () => {
+    const bytes = new Uint8Array([1, 2, 3]);
+    const discoveredApi = await discovered();
+    const cases: Array<[CatalogPet, Response]> = [
+      [
+        {
+          ...catalogPet(bytes),
+          assets: {
+            ...catalogPet(bytes).assets,
+            byteSize: {
+              ...catalogPet(bytes).assets.byteSize,
+              package: MAX_PACKAGE_BYTES + 1,
+            },
+          },
+        },
+        packageResponse(bytes),
+      ],
+      [
+        {
+          ...catalogPet(bytes),
+          assets: {
+            ...catalogPet(bytes).assets,
+            sha256: {
+              ...catalogPet(bytes).assets.sha256,
+              package: '0'.repeat(64),
+            },
+          },
+        },
+        packageResponse(bytes),
+      ],
+      [catalogPet(bytes), packageResponse(bytes, 'text/html')],
+      [catalogPet(bytes), packageResponse(new Uint8Array([1, 2]))],
+    ];
+    for (const [pet, response] of cases) {
       await expectFailure(
-        discoverApi('https://pets.example', {
-          clientVersion: '1.0.0',
-          fetchImpl: vi.fn(async () =>
-            discoveryResponse(document)
-          ) as typeof fetch,
+        downloadInstallPackage(pet, {
+          discoveredApi,
+          fetchImpl: vi.fn(async () => response) as typeof fetch,
         }),
         ExitCode.Integrity
       );
     }
   });
+
+  it('treats install reporting as best effort', async () => {
+    const discoveredApi = await discovered();
+    await expect(
+      reportInstall('sleepy-fox', discoveredApi, {
+        fetchImpl: vi.fn(async () => {
+          throw new Error('offline');
+        }) as typeof fetch,
+      })
+    ).resolves.toBe(false);
+  });
 });
 
-function sequentialFetch(metadata: Response, packageResult?: Response) {
-  const fetchImpl = vi
-    .fn<typeof fetch>()
-    .mockResolvedValueOnce(discoveryResponse())
-    .mockResolvedValueOnce(metadata);
-  if (packageResult) fetchImpl.mockResolvedValueOnce(packageResult);
-  return fetchImpl;
+async function discovered() {
+  return await discoverApi('https://pets.example', {
+    fetchImpl: vi.fn(async () => Response.json(discovery())) as typeof fetch,
+  });
 }
 
 function discovery(overrides: Record<string, unknown> = {}) {
@@ -237,8 +230,8 @@ function discovery(overrides: Record<string, unknown> = {}) {
         'https://cdn.pets.example/contracts/public/v1.0.0/openapi.json',
       supportedVersions: ['v1'],
     },
-    assets: { origin: 'https://cdn.pets.example' },
-    catalogUrl: 'https://pets.example/api/v1/pub/pet-catalog',
+    assets: { delivery: 'cdn', origin: 'https://cdn.pets.example' },
+    catalogUrl: 'https://cdn.pets.example/catalogs/v1/pets.json',
     cli: { binary: 'petdb', minVersion: '1.0.0', packageName: 'petdb' },
     docsUrl: 'https://pets.example/en/docs',
     product: 'CodexPetDB',
@@ -248,56 +241,53 @@ function discovery(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function discoveryResponse(value = discovery()): Response {
-  return Response.json(value);
+function catalog() {
+  const pet = catalogPet(new Uint8Array([1]));
+  return {
+    assetBase: 'https://cdn.pets.example/',
+    generatedAt: '2026-07-19T00:00:00.000Z',
+    pets: [pet],
+    schemaVersion: 1,
+    total: 1,
+  };
 }
 
-function metadataResponse(
-  bytes: Uint8Array,
-  overrides: {
-    sha256?: string;
-    sizeBytes?: number;
-    url?: string;
-  } = {}
-): Response {
-  return Response.json({
-    data: {
-      formatVersion: 2,
-      package: {
-        byteSize: overrides.sizeBytes ?? bytes.byteLength,
-        contentType: 'application/zip',
-        filename: 'sleepy-fox.zip',
-        sha256: overrides.sha256 ?? sha256(bytes),
-        url:
-          overrides.url ?? 'https://cdn.pets.example/packages/sleepy-fox.zip',
+function catalogPet(bytes: Uint8Array): CatalogPet {
+  return {
+    assets: {
+      byteSize: {
+        manifest: 1,
+        package: bytes.byteLength,
+        poster: 1,
+        spritesheet: 1,
       },
-      petId: 'sleepy-fox',
-      revisionId: 'rev_123',
+      prefix: 'revisions/0197c001-7c00-7000-8000-000000000001/',
+      sha256: {
+        manifest: 'a'.repeat(64),
+        package: createHash('sha256').update(bytes).digest('hex'),
+        poster: 'b'.repeat(64),
+        spritesheet: 'c'.repeat(64),
+      },
+      spritesheetFile: 'spritesheet.webp',
     },
-    meta: {},
-  });
+    author: 'Mira',
+    displayName: 'Sleepy Fox',
+    kind: 'creature',
+    revision: { id: '0197c001-7c00-7000-8000-000000000001', number: 1 },
+    slug: 'sleepy-fox',
+  };
 }
 
-function packageResponse(
-  bytes: Uint8Array,
-  overrides: { contentType?: string; sizeBytes?: number } = {}
-): Response {
-  return new Response(bytes.slice().buffer as ArrayBuffer, {
-    headers: {
-      'Content-Length': String(overrides.sizeBytes ?? bytes.byteLength),
-      'Content-Type': overrides.contentType ?? 'application/zip',
-    },
+function packageResponse(bytes: Uint8Array, contentType = 'application/zip') {
+  return new Response(Uint8Array.from(bytes).buffer, {
+    headers: { 'Content-Type': contentType },
   });
-}
-
-function sha256(bytes: Uint8Array): string {
-  return createHash('sha256').update(bytes).digest('hex');
 }
 
 async function expectFailure(
   promise: Promise<unknown>,
   exitCode: ExitCodeValue
-): Promise<void> {
+) {
   await expect(promise).rejects.toEqual(
     expect.objectContaining<Partial<CliError>>({ exitCode })
   );

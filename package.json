@@ -7,19 +7,17 @@
     "petdb": "dist/cli.js"
   },
   "files": [
-    "contracts",
     "dist",
     "README.md",
     "README.zh-CN.md"
   ],
   "engines": {
-    "node": ">=26.4.0 <27"
+    "node": ">=20"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "check": "biome check . && redocly lint contracts/openapi.json --extends=minimal",
+    "check": "biome check .",
     "deploy:manual": "node scripts/deploy-manual.mjs",
-    "openapi:preview": "scalar document serve contracts/openapi.json --watch --port 4001",
     "pack:smoke": "node scripts/pack-smoke.mjs",
     "prepack": "pnpm build",
     "start": "node dist/cli.js",
@@ -32,9 +30,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.3.12",
-    "@redocly/cli": "2.39.0",
-    "@scalar/cli": "2.0.1",
-    "@types/node": "^26.0.0",
+    "@types/node": "^20.19.0",
     "typescript": "^5.7.2",
     "vitest": "~3.2.4"
   },
