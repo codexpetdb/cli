@@ -108,10 +108,6 @@ try {
         api: {
           baseUrl: `${origin}/api/v1/pub`,
           currentVersion: 'v1',
-          openApiUrl: storageUrl(
-            origin,
-            'contracts/public/v1.0.0/openapi.json'
-          ),
           supportedVersions: ['v1'],
         },
         assets: { delivery: 'proxy', origin },

@@ -35,8 +35,6 @@ describe('catalog discovery and downloads', () => {
       api: {
         ...discovery().api,
         baseUrl: 'http://localhost:3000/api/v1/pub',
-        openApiUrl:
-          'http://localhost:3000/api/storage/file?key=contracts%2Fpublic%2Fv1.0.0%2Fopenapi.json',
       },
       assets: { delivery: 'proxy', origin: 'http://localhost:3000' },
       catalogUrl:
@@ -51,6 +49,22 @@ describe('catalog discovery and downloads', () => {
         fetchImpl: vi.fn(async () => Response.json(document)) as typeof fetch,
       })
     ).resolves.toMatchObject({ assetDelivery: 'proxy' });
+  });
+
+  it('rejects deprecated OpenAPI discovery metadata', async () => {
+    const document = discovery();
+    document.api = {
+      ...document.api,
+      openApiUrl:
+        'https://cdn.pets.example/contracts/public/v1.0.0/openapi.json',
+    } as typeof document.api;
+
+    await expectFailure(
+      discoverApi('https://pets.example', {
+        fetchImpl: vi.fn(async () => Response.json(document)) as typeof fetch,
+      }),
+      ExitCode.Integrity
+    );
   });
 
   it('requires the exact Collection catalog URL', async () => {
@@ -277,8 +291,6 @@ function discovery(overrides: Record<string, unknown> = {}) {
     api: {
       baseUrl: 'https://pets.example/api/v1/pub',
       currentVersion: 'v1',
-      openApiUrl:
-        'https://cdn.pets.example/contracts/public/v1.0.0/openapi.json',
       supportedVersions: ['v1'],
     },
     assets: { delivery: 'cdn', origin: 'https://cdn.pets.example' },

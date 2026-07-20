@@ -32,14 +32,13 @@ petdb version
 退出码：`0` 成功，`2` 参数错误，`3` 网络失败，`4` 完整性校验失败，`5`
 文件系统或安装失败。
 
-## 公开契约
+## 公开 Catalog
 
-- [线上 OpenAPI 1.0.0](https://cdn.codexpetdb.com/contracts/public/v1.0.0/openapi.json)
 - [线上 Pet Catalog](https://cdn.codexpetdb.com/catalogs/v1/pets.json)
 - [线上 Collection Catalog](https://cdn.codexpetdb.com/catalogs/v1/collections.json)
 
-OpenAPI 和 Catalog 均由闭源 Web 项目生成并发布。CLI 仓库仅提供社区审阅链接，
-不会把对应文件复制进 npm 包或本仓库。
+Catalog 由闭源 Web 项目生成并发布。CLI 仓库仅提供社区审阅链接，不会把对应文件
+复制进 npm 包或本仓库。
 
 ## 开发
 

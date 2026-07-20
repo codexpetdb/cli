@@ -67,7 +67,6 @@ interface DiscoveryDocument {
   api: {
     baseUrl: string;
     currentVersion: 'v1';
-    openApiUrl: string;
     supportedVersions: string[];
   };
   assets: { delivery: 'cdn' | 'proxy'; origin: string };
@@ -307,18 +306,12 @@ function validateDiscovery(
   }
   const api = document.api;
   if (
-    !hasExactKeys(api, [
-      'baseUrl',
-      'currentVersion',
-      'openApiUrl',
-      'supportedVersions',
-    ]) ||
+    !hasExactKeys(api, ['baseUrl', 'currentVersion', 'supportedVersions']) ||
     api.currentVersion !== 'v1' ||
     !Array.isArray(api.supportedVersions) ||
     api.supportedVersions.length !== 1 ||
     api.supportedVersions[0] !== 'v1' ||
-    typeof api.baseUrl !== 'string' ||
-    typeof api.openApiUrl !== 'string'
+    typeof api.baseUrl !== 'string'
   ) {
     throw invalidDiscovery();
   }
@@ -343,7 +336,6 @@ function validateDiscovery(
     !assetOrigin ||
     !catalogUrl ||
     !collectionCatalogUrl ||
-    !parseOpenApiUrl(api.openApiUrl, site, assetOrigin) ||
     !exactUrl(document.docsUrl, `${site.origin}/en/docs`)
   ) {
     throw invalidDiscovery();
@@ -590,32 +582,6 @@ function parseCollectionCatalogUrl(
     );
   }
   return exactStorageUrl(value, site, 'catalogs/v1/collections.json');
-}
-
-function parseOpenApiUrl(
-  value: string,
-  site: URL,
-  assetOrigin: URL
-): URL | null {
-  try {
-    const parsed = new URL(value);
-    if (
-      parsed.origin === assetOrigin.origin &&
-      /^\/contracts\/public\/v\d+\.\d+\.\d+\/openapi\.json$/u.test(
-        parsed.pathname
-      ) &&
-      parsed.search === ''
-    ) {
-      return parsed;
-    }
-  } catch {
-    return null;
-  }
-  return exactStorageUrlFromPattern(
-    value,
-    site,
-    /^contracts\/public\/v\d+\.\d+\.\d+\/openapi\.json$/u
-  );
 }
 
 function exactStorageUrl(value: string, site: URL, key: string): URL | null {

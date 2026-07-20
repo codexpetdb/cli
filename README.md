@@ -36,15 +36,14 @@ petdb version
 Exit codes: `0` success, `2` usage, `3` network, `4` integrity, and `5`
 filesystem or installation failure.
 
-## Public contracts
+## Public catalogs
 
-- [Live OpenAPI 1.0.0](https://cdn.codexpetdb.com/contracts/public/v1.0.0/openapi.json)
 - [Live pet catalog](https://cdn.codexpetdb.com/catalogs/v1/pets.json)
 - [Live collection catalog](https://cdn.codexpetdb.com/catalogs/v1/collections.json)
 
-The OpenAPI contract and catalogs are generated and published by the private Web
-project. They are linked here for community inspection but are not copied into
-the npm package or this repository.
+The catalogs are generated and published by the private Web project. They are
+linked here for community inspection but are not copied into the npm package or
+this repository.
 
 ## Development
 
