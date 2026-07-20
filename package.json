@@ -23,14 +23,18 @@
     "start": "node dist/cli.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepare": "lefthook install"
   },
   "dependencies": {
     "fflate": "^0.8.2"
   },
   "devDependencies": {
     "@biomejs/biome": "2.3.12",
+    "@commitlint/cli": "^21.2.1",
+    "@commitlint/config-conventional": "^21.2.0",
     "@types/node": "^20.19.0",
+    "lefthook": "^2.1.10",
     "typescript": "^5.7.2",
     "vitest": "~3.2.4"
   },

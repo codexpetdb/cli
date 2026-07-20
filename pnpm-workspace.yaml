@@ -4,4 +4,5 @@ packages:
 allowBuilds:
   '@scarf/scarf': false
   esbuild: true
+  lefthook: true
   vue-demi: true
