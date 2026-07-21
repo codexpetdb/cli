@@ -1,15 +1,15 @@
-# petdb
+# CodexPetDB CLI
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-`petdb` lists and installs verified public Codex pets from CodexPetDB. The
-database and Web application are private; this CLI is maintained publicly for
-community review.
+The `codexpetdb` npm package exposes the `petdb` command for listing and
+installing verified public Codex pets from CodexPetDB. The database and Web
+application are private; this CLI is maintained publicly for community review.
 
 ```sh
-npx petdb list
-npx petdb install sleepy-fox
-npx petdb install --collection cozy-friends
+npx codexpetdb list
+npx codexpetdb install sleepy-fox
+npx codexpetdb install --collection cozy-friends
 ```
 
 Pets are installed in `~/.codex/pets/<pet-slug>` by default. Set `CODEX_HOME`

@@ -1,5 +1,5 @@
 {
-  "name": "petdb",
+  "name": "codexpetdb",
   "version": "1.0.0",
   "description": "Install verified Codex pets from CodexPetDB.",
   "type": "module",

@@ -1,14 +1,14 @@
-# petdb
+# CodexPetDB CLI
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-`petdb` 用于查看并安装 CodexPetDB 中经过校验的公开 Codex 桌宠。数据库和 Web
-应用保持闭源；CLI 公开维护，方便社区审阅。
+`codexpetdb` npm 包提供 `petdb` 命令，用于查看并安装 CodexPetDB 中经过校验的
+公开 Codex 桌宠。数据库和 Web 应用保持闭源；CLI 公开维护，方便社区审阅。
 
 ```sh
-npx petdb list
-npx petdb install sleepy-fox
-npx petdb install --collection cozy-friends
+npx codexpetdb list
+npx codexpetdb install sleepy-fox
+npx codexpetdb install --collection cozy-friends
 ```
 
 默认安装到 `~/.codex/pets/<pet-slug>`。可通过 `CODEX_HOME` 修改 Codex 目录，

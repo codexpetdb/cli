@@ -45,7 +45,7 @@ try {
     );
   }
 
-  const installedRoot = path.join(temporary, 'node_modules', 'petdb');
+  const installedRoot = path.join(temporary, 'node_modules', 'codexpetdb');
   const packageJson = JSON.parse(
     await readFile(path.join(installedRoot, 'package.json'), 'utf8')
   );
@@ -119,7 +119,7 @@ try {
         cli: {
           binary: 'petdb',
           minVersion: '1.0.0',
-          packageName: 'petdb',
+          packageName: 'codexpetdb',
         },
         docsUrl: `${origin}/en/docs`,
         product: 'CodexPetDB',
@@ -245,7 +245,7 @@ try {
       server.close((error) => (error ? reject(error) : resolve()))
     );
   }
-  console.log(`Packed, installed, and smoke-tested petdb ${version}.`);
+  console.log(`Packed, installed, and smoke-tested codexpetdb ${version}.`);
 } finally {
   await rm(temporary, { force: true, recursive: true });
 }

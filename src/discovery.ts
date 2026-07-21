@@ -72,7 +72,7 @@ interface DiscoveryDocument {
   assets: { delivery: 'cdn' | 'proxy'; origin: string };
   catalogUrl: string;
   collectionCatalogUrl: string;
-  cli?: { binary: 'petdb'; minVersion: string; packageName: 'petdb' };
+  cli?: { binary: 'petdb'; minVersion: string; packageName: 'codexpetdb' };
   docsUrl: string;
   product: 'CodexPetDB';
   schemaVersion: 1;
@@ -643,7 +643,7 @@ function validateCli(value: unknown, clientVersion: string): void {
     !isRecord(value) ||
     !hasExactKeys(value, ['binary', 'minVersion', 'packageName']) ||
     value.binary !== 'petdb' ||
-    value.packageName !== 'petdb' ||
+    value.packageName !== 'codexpetdb' ||
     typeof value.minVersion !== 'string' ||
     !isSemver(value.minVersion) ||
     !isSemver(clientVersion)

@@ -297,7 +297,7 @@ function discovery(overrides: Record<string, unknown> = {}) {
     catalogUrl: 'https://cdn.pets.example/catalogs/v1/pets.json',
     collectionCatalogUrl:
       'https://cdn.pets.example/catalogs/v1/collections.json',
-    cli: { binary: 'petdb', minVersion: '1.0.0', packageName: 'petdb' },
+    cli: { binary: 'petdb', minVersion: '1.0.0', packageName: 'codexpetdb' },
     docsUrl: 'https://pets.example/en/docs',
     product: 'CodexPetDB',
     schemaVersion: 1,
