@@ -28,6 +28,8 @@ jobs:
       - run: mkdir -p .artifacts && pnpm pack --pack-destination .artifacts
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
+          if-no-files-found: error
+          include-hidden-files: true
           name: codexpetdb-tarball
           path: .artifacts/*.tgz
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
