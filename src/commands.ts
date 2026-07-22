@@ -67,7 +67,7 @@ export async function loginCommand(output: CommandOutput): Promise<void> {
   }
 
   const device = await requestDeviceCode(site);
-  output.stdout.write(`Open: ${device.verification_uri}\n`);
+  output.stdout.write(`Open: ${device.verification_uri_complete}\n`);
   output.stdout.write(`Code: ${device.user_code}\n`);
   output.stdout.write(`Expires in: ${device.expires_in} seconds\n`);
   openBrowser(device.verification_uri_complete);

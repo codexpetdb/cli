@@ -104,11 +104,13 @@ Signs in through a browser-approved device authorization flow.
 petdb login
 ```
 
-The CLI prints a verification URL, one-time code, and expiration time, then
-attempts to open the browser. It continues polling until the request is
-approved, denied, expired, cancelled with `Ctrl+C`, or fails. If the current
-site already has a valid credential, `login` prints that identity instead of
-switching accounts; run `petdb logout` first to use another account.
+The CLI prints a complete verification URL containing the one-time code, the
+code itself, and the expiration time, then attempts to open the browser. The
+URL can be copied and opened without entering the code separately. The CLI
+continues polling until the request is approved, denied, expired, cancelled
+with `Ctrl+C`, or fails. If the current site already has a valid credential,
+`login` prints that identity instead of switching accounts; run `petdb logout`
+first to use another account.
 
 Credentials are stored in the OS Keychain when available. The fallback file is
 written atomically and restricted to mode `0600` on supported Unix systems:
@@ -322,9 +324,9 @@ the npm workflow succeeds, create the GitHub Release from the prepared
 `RELEASE_NOTES.md`.
 
 ```sh
-gh release create v1.1.1 \
+gh release create v1.1.2 \
   --verify-tag \
-  --title "codexpetdb v1.1.1" \
+  --title "codexpetdb v1.1.2" \
   --notes-file RELEASE_NOTES.md
 ```
 

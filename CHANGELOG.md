@@ -2,6 +2,14 @@
 
 All notable changes to the CodexPetDB CLI are documented in this file.
 
+## 1.1.2 - 2026-07-22
+
+### Fixed
+
+- `login` now prints the complete device authorization URL containing the
+  one-time code, so it can be copied and opened without entering the code
+  separately.
+
 ## 1.1.1 - 2026-07-22
 
 ### Added

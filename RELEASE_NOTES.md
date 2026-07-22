@@ -1,26 +1,28 @@
-# codexpetdb v1.1.1
+# codexpetdb v1.1.2
 
-This patch release adds `codexpetdb` as a binary alias for `petdb`. After a
-global installation, either command invokes the same CLI:
+This patch release makes browser-approved login easier to complete from
+terminals where automatic browser opening is unavailable.
+
+`petdb login` and `codexpetdb login` now print the complete device
+authorization URL containing the one-time code. Copying and opening that URL
+continues directly to approval without requiring the code to be entered again:
 
 ```sh
 petdb login
-codexpetdb login
 ```
 
-The packed-package smoke test now runs `version` through both installed binary
-names to prevent either alias from disappearing in a future release.
+The separate code and expiration time remain visible as a fallback.
 
 ## Install or upgrade
 
 Node.js 20 or newer is required.
 
 ```sh
-npm install --global codexpetdb@1.1.1
+npm install --global codexpetdb@1.1.2
 petdb version
 codexpetdb version
 ```
 
 See the
-[complete changelog](https://github.com/codexpetdb/cli/blob/v1.1.1/CHANGELOG.md)
-and [full command reference](https://github.com/codexpetdb/cli/blob/v1.1.1/README.md).
+[complete changelog](https://github.com/codexpetdb/cli/blob/v1.1.2/CHANGELOG.md)
+and [full command reference](https://github.com/codexpetdb/cli/blob/v1.1.2/README.md).

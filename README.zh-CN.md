@@ -98,9 +98,10 @@ petdb install --collection cozy-friends
 petdb login
 ```
 
-CLI 会显示验证 URL、一次性代码和过期时间，并尝试打开浏览器。随后持续轮询，直到
-请求被批准、拒绝、过期、用 `Ctrl+C` 取消或发生失败。如果当前站点已经有有效凭证，
-`login` 会显示当前身份而不会切换账号；如需更换账号，请先执行 `petdb logout`。
+CLI 会显示包含一次性代码的完整验证 URL、代码本身和过期时间，并尝试打开浏览器。
+复制并打开该 URL 后无需再次手动输入代码。随后 CLI 持续轮询，直到请求被批准、
+拒绝、过期、用 `Ctrl+C` 取消或发生失败。如果当前站点已经有有效凭证，`login` 会
+显示当前身份而不会切换账号；如需更换账号，请先执行 `petdb logout`。
 
 凭证优先存入 OS Keychain。回退文件会原子写入，并在支持的 Unix 系统上限制为
 `0600` 权限：
@@ -301,9 +302,9 @@ pnpm deploy:manual
 `RELEASE_NOTES.md` 创建 GitHub Release。
 
 ```sh
-gh release create v1.1.1 \
+gh release create v1.1.2 \
   --verify-tag \
-  --title "codexpetdb v1.1.1" \
+  --title "codexpetdb v1.1.2" \
   --notes-file RELEASE_NOTES.md
 ```
 
