@@ -1,28 +1,22 @@
-# codexpetdb v1.1.2
+# codexpetdb v1.1.3
 
-This patch release makes browser-approved login easier to complete from
-terminals where automatic browser opening is unavailable.
+This patch release makes install-count reporting resilient to production cold
+starts without changing the success behavior of local installation.
 
-`petdb login` and `codexpetdb login` now print the complete device
-authorization URL containing the one-time code. Copying and opening that URL
-continues directly to approval without requiring the code to be entered again:
-
-```sh
-petdb login
-```
-
-The separate code and expiration time remain visible as a fallback.
+The best-effort metrics request now waits up to 10 seconds instead of 2
+seconds. Reporting remains silent: a timeout or service error never fails or
+adds noise to a successfully completed `petdb install` command.
 
 ## Install or upgrade
 
 Node.js 20 or newer is required.
 
 ```sh
-npm install --global codexpetdb@1.1.2
+npm install --global codexpetdb@1.1.3
 petdb version
 codexpetdb version
 ```
 
 See the
-[complete changelog](https://github.com/codexpetdb/cli/blob/v1.1.2/CHANGELOG.md)
-and [full command reference](https://github.com/codexpetdb/cli/blob/v1.1.2/README.md).
+[complete changelog](https://github.com/codexpetdb/cli/blob/v1.1.3/CHANGELOG.md)
+and [full command reference](https://github.com/codexpetdb/cli/blob/v1.1.3/README.md).

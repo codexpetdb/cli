@@ -8,7 +8,7 @@ export const MAX_CATALOG_BYTES = 10 * 1024 * 1024;
 export const MAX_PACKAGE_BYTES = 25 * 1024 * 1024;
 
 const REQUEST_TIMEOUT_MS = 30_000;
-const INSTALL_REPORT_TIMEOUT_MS = 2_000;
+const INSTALL_REPORT_TIMEOUT_MS = 10_000;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const REVISION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;

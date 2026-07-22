@@ -302,9 +302,9 @@ pnpm deploy:manual
 `RELEASE_NOTES.md` 创建 GitHub Release。
 
 ```sh
-gh release create v1.1.2 \
+gh release create v1.1.3 \
   --verify-tag \
-  --title "codexpetdb v1.1.2" \
+  --title "codexpetdb v1.1.3" \
   --notes-file RELEASE_NOTES.md
 ```
 

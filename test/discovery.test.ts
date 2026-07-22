@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { describe, expect, it, vi } from 'vitest';
 import {
   type CatalogPet,
@@ -296,6 +297,20 @@ describe('catalog discovery and downloads', () => {
         }) as typeof fetch,
       })
     ).resolves.toBe(false);
+  });
+
+  it('allows install reporting to finish after two seconds', async () => {
+    const discoveredApi = await discovered();
+    await expect(
+      reportInstall('sleepy-fox', discoveredApi, {
+        fetchImpl: vi.fn(async (_input, init) => {
+          await delay(2_500, undefined, {
+            signal: init?.signal ?? undefined,
+          });
+          return new Response(null, { status: 204 });
+        }) as typeof fetch,
+      })
+    ).resolves.toBe(true);
   });
 });
 

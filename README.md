@@ -324,9 +324,9 @@ the npm workflow succeeds, create the GitHub Release from the prepared
 `RELEASE_NOTES.md`.
 
 ```sh
-gh release create v1.1.2 \
+gh release create v1.1.3 \
   --verify-tag \
-  --title "codexpetdb v1.1.2" \
+  --title "codexpetdb v1.1.3" \
   --notes-file RELEASE_NOTES.md
 ```
 

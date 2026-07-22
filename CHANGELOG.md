@@ -2,6 +2,15 @@
 
 All notable changes to the CodexPetDB CLI are documented in this file.
 
+## 1.1.3 - 2026-07-22
+
+### Fixed
+
+- Increased the best-effort install-count reporting timeout from 2 seconds to
+  10 seconds so production cold starts do not silently lose successful install
+  metrics. Reporting failures remain silent and never fail a completed local
+  installation.
+
 ## 1.1.2 - 2026-07-22
 
 ### Fixed

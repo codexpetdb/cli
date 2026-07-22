@@ -11,7 +11,7 @@ describe('CLI API adapter', () => {
     const fetchMock = vi.fn(async (request: Request) => {
       expect(request.url).toBe('https://pets.example/api/v1/user/me');
       expect(request.headers.get('authorization')).toBe('Bearer secret-token');
-      expect(request.headers.get('user-agent')).toBe('petdb/1.1.2');
+      expect(request.headers.get('user-agent')).toBe('petdb/1.1.3');
       expect(request.redirect).toBe('error');
       return Response.json(
         {
