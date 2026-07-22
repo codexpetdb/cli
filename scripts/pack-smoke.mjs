@@ -334,7 +334,14 @@ try {
   }
   console.log(`Packed, installed, and smoke-tested codexpetdb ${version}.`);
 } finally {
-  await rm(temporary, { force: true, recursive: true });
+  try {
+    await rm(temporary, { force: true, recursive: true });
+  } catch (error) {
+    if (process.platform !== 'win32' || error?.code !== 'EPERM') {
+      console.error(error);
+      process.exitCode = 1;
+    }
+  }
 }
 
 function petFixture(slug, revisionId, sprite, spritesheetFile) {

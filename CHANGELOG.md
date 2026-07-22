@@ -47,6 +47,8 @@ All notable changes to the CodexPetDB CLI are documented in this file.
   actual package across Linux, macOS, and Windows.
 - Fixed Windows execution of npm and pnpm command shims in packed runtime
   smoke tests.
+- Made Windows temporary cleanup best-effort when the loaded `sharp` DLL
+  remains locked until the smoke process exits.
 - Expanded the English and Simplified Chinese READMEs with complete command,
   validation, credential, exit-code, and release documentation.
 
