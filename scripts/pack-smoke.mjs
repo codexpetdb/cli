@@ -72,8 +72,10 @@ try {
   const packageJson = JSON.parse(
     await readFile(path.join(installedRoot, 'package.json'), 'utf8')
   );
-  if (packageJson.bin?.petdb !== 'dist/cli.js') {
-    throw new Error('Packed package does not expose the petdb binary.');
+  for (const binary of ['codexpetdb', 'petdb']) {
+    if (packageJson.bin?.[binary] !== 'dist/cli.js') {
+      throw new Error(`Packed package does not expose the ${binary} binary.`);
+    }
   }
   for (const includedDocument of [
     'CHANGELOG.md',
@@ -101,13 +103,16 @@ try {
   }
 
   const cli = path.join(installedRoot, 'dist', 'cli.js');
-  const version = run(
-    process.execPath,
-    [cli, 'version'],
-    temporary
-  ).stdout.trim();
-  if (version !== packageJson.version) {
-    throw new Error(`Packed CLI version mismatch: ${version}`);
+  const binaryRoot = path.join(temporary, 'node_modules', '.bin');
+  for (const binary of ['codexpetdb', 'petdb']) {
+    const executable = path.join(
+      binaryRoot,
+      process.platform === 'win32' ? `${binary}.cmd` : binary
+    );
+    const version = run(executable, ['version'], temporary).stdout.trim();
+    if (version !== packageJson.version) {
+      throw new Error(`Packed ${binary} version mismatch: ${version}`);
+    }
   }
   const help = run(process.execPath, [cli, 'help'], temporary).stdout;
   for (const command of [
@@ -332,7 +337,9 @@ try {
       server.close((error) => (error ? reject(error) : resolve()))
     );
   }
-  console.log(`Packed, installed, and smoke-tested codexpetdb ${version}.`);
+  console.log(
+    `Packed, installed, and smoke-tested codexpetdb ${packageJson.version}.`
+  );
 } finally {
   try {
     await rm(temporary, { force: true, recursive: true });

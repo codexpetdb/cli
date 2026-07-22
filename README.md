@@ -3,9 +3,10 @@
 [English](README.md) | [简体中文](README.zh-CN.md) |
 [Changelog](CHANGELOG.md)
 
-The `codexpetdb` npm package provides the `petdb` command for discovering,
-installing, submitting, and editing verified Codex pets. The database and Web
-application are private; this CLI is maintained publicly for community review.
+The `codexpetdb` npm package provides the `petdb` command and the equivalent
+`codexpetdb` alias for discovering, installing, submitting, and editing
+verified Codex pets. The database and Web application are private; this CLI is
+maintained publicly for community review.
 
 ## Requirements and installation
 
@@ -14,6 +15,7 @@ Node.js 20 or newer is required.
 ```sh
 npm install --global codexpetdb
 petdb version
+codexpetdb version
 ```
 
 Commands can also be run without a global installation:
@@ -26,7 +28,11 @@ npx codexpetdb list
 
 ```text
 petdb [--debug] <command>
+codexpetdb [--debug] <command>
 ```
+
+Both binary names run the same CLI. The examples below use the shorter
+`petdb` name.
 
 `--debug` can appear before or after the command. When an HTTP call fails, it
 writes the status code and redacted response body to stderr. Sensitive fields
@@ -316,9 +322,9 @@ the npm workflow succeeds, create the GitHub Release from the prepared
 `RELEASE_NOTES.md`.
 
 ```sh
-gh release create v1.1.0 \
+gh release create v1.1.1 \
   --verify-tag \
-  --title "codexpetdb v1.1.0" \
+  --title "codexpetdb v1.1.1" \
   --notes-file RELEASE_NOTES.md
 ```
 

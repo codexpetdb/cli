@@ -3,8 +3,9 @@
 [English](README.md) | [简体中文](README.zh-CN.md) |
 [更新日志](CHANGELOG.zh-CN.md)
 
-`codexpetdb` npm 包提供 `petdb` 命令，用于发现、安装、提交和编辑 CodexPetDB
-中经过校验的 Codex 桌宠。数据库和 Web 应用保持闭源；CLI 公开维护，方便社区审阅。
+`codexpetdb` npm 包提供 `petdb` 命令及等价的 `codexpetdb` 别名，用于发现、安装、
+提交和编辑 CodexPetDB 中经过校验的 Codex 桌宠。数据库和 Web 应用保持闭源；CLI
+公开维护，方便社区审阅。
 
 ## 环境要求与安装
 
@@ -13,6 +14,7 @@
 ```sh
 npm install --global codexpetdb
 petdb version
+codexpetdb version
 ```
 
 也可以不安装全局包，直接执行：
@@ -25,7 +27,10 @@ npx codexpetdb list
 
 ```text
 petdb [--debug] <command>
+codexpetdb [--debug] <command>
 ```
+
+两个 binary 名称运行同一个 CLI。下文示例统一使用更短的 `petdb`。
 
 `--debug` 可以放在命令前或命令后。HTTP 调用失败时，它会向 stderr 输出状态码和
 经过脱敏的响应内容。敏感字段会被移除，响应最多输出 16 KiB。请求成功或失败时没有
@@ -296,9 +301,9 @@ pnpm deploy:manual
 `RELEASE_NOTES.md` 创建 GitHub Release。
 
 ```sh
-gh release create v1.1.0 \
+gh release create v1.1.1 \
   --verify-tag \
-  --title "codexpetdb v1.1.0" \
+  --title "codexpetdb v1.1.1" \
   --notes-file RELEASE_NOTES.md
 ```
 

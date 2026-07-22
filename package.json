@@ -1,9 +1,10 @@
 {
   "name": "codexpetdb",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Manage and install verified Codex pets from CodexPetDB.",
   "type": "module",
   "bin": {
+    "codexpetdb": "dist/cli.js",
     "petdb": "dist/cli.js"
   },
   "files": [

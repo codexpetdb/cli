@@ -2,6 +2,13 @@
 
 All notable changes to the CodexPetDB CLI are documented in this file.
 
+## 1.1.1 - 2026-07-22
+
+### Added
+
+- Added `codexpetdb` as a binary alias for `petdb`, so both commands invoke
+  the same CLI after a global installation.
+
 ## 1.1.0 - 2026-07-22
 
 ### Added
