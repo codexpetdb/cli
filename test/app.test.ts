@@ -27,6 +27,7 @@ describe('CLI commands', () => {
     await expect(run(['help'], output)).resolves.toBe(ExitCode.Success);
     expect(output.stdoutText()).toContain('petdb list');
     expect(output.stdoutText()).toContain('petdb install <pet-slug>');
+    expect(output.stdoutText()).toContain('--debug');
     expect(output.stdoutText()).not.toContain('petdb add');
   });
 
@@ -124,6 +125,112 @@ describe('CLI commands', () => {
       ['list', '--json'],
     ]) {
       await expect(run(args, dependencies())).resolves.toBe(ExitCode.Usage);
+    }
+  });
+
+  it('dispatches account and submit commands with parsed options', async () => {
+    const login = vi.fn(async () => undefined);
+    const logout = vi.fn(async () => undefined);
+    const submit = vi.fn(async () => undefined);
+    const whoami = vi.fn(async () => undefined);
+    const output = dependencies({ login, logout, submit, whoami });
+
+    await expect(run(['login'], output)).resolves.toBe(ExitCode.Success);
+    await expect(run(['logout', '--local-only'], output)).resolves.toBe(
+      ExitCode.Success
+    );
+    await expect(run(['whoami'], output)).resolves.toBe(ExitCode.Success);
+    await expect(
+      run(['submit', './pet-package', '--yes'], output)
+    ).resolves.toBe(ExitCode.Success);
+
+    expect(login).toHaveBeenCalledOnce();
+    expect(logout).toHaveBeenCalledWith(output, true);
+    expect(whoami).toHaveBeenCalledOnce();
+    expect(submit).toHaveBeenCalledWith(
+      './pet-package',
+      { interactive: process.stdin.isTTY === true, yes: true },
+      output
+    );
+  });
+
+  it('prints HTTP diagnostics only when --debug is enabled', async () => {
+    const failure = new CliError('The session is invalid.', ExitCode.Auth, {
+      http: {
+        response: '{"detail":"The session is invalid."}',
+        status: 401,
+      },
+    });
+    const withoutDebug = dependencies({
+      whoami: vi.fn(async () => {
+        throw failure;
+      }),
+    });
+    await expect(run(['whoami'], withoutDebug)).resolves.toBe(ExitCode.Auth);
+    expect(withoutDebug.stderrText()).toBe('petdb: The session is invalid.\n');
+
+    const withDebug = dependencies({
+      whoami: vi.fn(async () => {
+        throw new CliError('Account lookup failed.', ExitCode.Auth, {
+          cause: failure,
+        });
+      }),
+    });
+    await expect(run(['whoami', '--debug'], withDebug)).resolves.toBe(
+      ExitCode.Auth
+    );
+    expect(withDebug.stderrText()).toContain('petdb debug: HTTP 401\n');
+    expect(withDebug.stderrText()).toContain(
+      'petdb debug: response: {"detail":"The session is invalid."}\n'
+    );
+  });
+
+  it('accepts --debug before a command and rejects duplicates', async () => {
+    const whoami = vi.fn(async () => undefined);
+    await expect(
+      run(['--debug', 'whoami'], dependencies({ whoami }))
+    ).resolves.toBe(ExitCode.Success);
+    expect(whoami).toHaveBeenCalledOnce();
+
+    await expect(
+      run(['--debug', 'whoami', '--debug'], dependencies({ whoami }))
+    ).resolves.toBe(ExitCode.Usage);
+  });
+
+  it('parses edit combinations and rejects ambiguous options', async () => {
+    const edit = vi.fn(async () => undefined);
+    const output = dependencies({ edit });
+
+    await expect(
+      run(
+        [
+          'edit',
+          'sleepy-fox',
+          '--display-name',
+          'Sleepier Fox',
+          '--spritesheet',
+          './spritesheet.webp',
+        ],
+        output
+      )
+    ).resolves.toBe(ExitCode.Success);
+    expect(edit).toHaveBeenCalledWith(
+      'sleepy-fox',
+      {
+        displayName: 'Sleepier Fox',
+        spritesheetPath: './spritesheet.webp',
+      },
+      output
+    );
+
+    for (const args of [
+      ['edit', 'sleepy-fox'],
+      ['edit', 'sleepy-fox', '--zip', './pet.zip', '--manifest', './pet.json'],
+      ['edit', 'sleepy-fox', '--description'],
+    ]) {
+      await expect(run(args, dependencies({ edit }))).resolves.toBe(
+        ExitCode.Usage
+      );
     }
   });
 });

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { CliError, ExitCode } from './errors.js';
+import { captureHttpDebug, CliError, ExitCode } from './errors.js';
 import { isPublicId } from './pet-id.js';
 
 export const DEFAULT_SITE_URL = 'https://codexpetdb.com';
@@ -133,7 +133,8 @@ export async function discoverApi(
   if (!response.ok) {
     throw new CliError(
       `CodexPetDB discovery failed with HTTP ${response.status}.`,
-      ExitCode.Network
+      ExitCode.Network,
+      { http: await captureHttpDebug(response) }
     );
   }
   assertNoRedirect(response, discoveryUrl, 'CodexPetDB discovery');
@@ -159,14 +160,18 @@ export async function downloadCatalog(
     options
   );
   if (!response.ok) {
+    const http = await captureHttpDebug(response);
     if (response.status === 404 || response.status === 410) {
-      throw integrityError(
-        'Pet catalog is unavailable. It may not be published yet or may be updating; retry later.'
+      throw new CliError(
+        'Pet catalog is unavailable. It may not be published yet or may be updating; retry later.',
+        ExitCode.Integrity,
+        { http }
       );
     }
     throw new CliError(
       `Pet catalog failed with HTTP ${response.status}.`,
-      ExitCode.Network
+      ExitCode.Network,
+      { http }
     );
   }
   assertNoRedirect(response, discoveredApi.catalogUrl, 'Pet catalog');
@@ -212,7 +217,8 @@ export async function downloadInstallPackage(
   if (!response.ok) {
     throw new CliError(
       `Pet download failed with HTTP ${response.status}.`,
-      ExitCode.Network
+      ExitCode.Network,
+      { http: await captureHttpDebug(response) }
     );
   }
   assertNoRedirect(response, packageUrl, 'Pet download');

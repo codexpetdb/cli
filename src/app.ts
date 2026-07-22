@@ -4,6 +4,14 @@ import {
   findCatalogCollection,
 } from './collection.js';
 import {
+  editCommand,
+  type EditOptions,
+  loginCommand,
+  logoutCommand,
+  submitCommand,
+  whoamiCommand,
+} from './commands.js';
+import {
   DEFAULT_SITE_URL,
   type CatalogPet,
   type DiscoveredApi,
@@ -13,20 +21,41 @@ import {
   findCatalogPet,
   reportInstall,
 } from './discovery.js';
-import { CliError, ExitCode, type ExitCodeValue } from './errors.js';
+import {
+  CliError,
+  ExitCode,
+  type ExitCodeValue,
+  findHttpDebugInfo,
+} from './errors.js';
 import { installPetFiles, recoverInstall } from './install.js';
 import { assertCollectionId, assertPetId } from './pet-id.js';
 import { resolvePetDirectory } from './paths.js';
 import { CLI_VERSION } from './version.js';
 
-const HELP = `petdb - install verified Codex pets
+const HELP = `petdb - manage and install verified Codex pets
 
 Usage:
+  petdb [--debug] <command>
   petdb list
   petdb install <pet-slug>
   petdb install --collection <collection-slug>
+  petdb login
+  petdb logout [--local-only]
+  petdb whoami
+  petdb submit <path> [--yes]
+  petdb edit <slug> [editing options]
   petdb help
   petdb version
+
+Editing options:
+  --description <text>
+  --display-name <name>
+  --manifest <path>
+  --spritesheet <path>
+  --zip <path>
+
+Global options:
+  --debug          Print HTTP status and redacted response for API failures
 
 Environment:
   CODEX_HOME       Codex home directory (default: ~/.codex)
@@ -46,7 +75,12 @@ interface AppDependencies extends Output {
   install?: typeof installPetFiles;
   recover?: typeof recoverInstall;
   report?: typeof reportInstall;
+  edit?: typeof editCommand;
+  login?: typeof loginCommand;
+  logout?: typeof logoutCommand;
+  submit?: typeof submitCommand;
   version?: string;
+  whoami?: typeof whoamiCommand;
 }
 
 export async function run(
@@ -56,8 +90,11 @@ export async function run(
     stdout: process.stdout,
   }
 ): Promise<ExitCodeValue> {
+  let debug = false;
   try {
-    const [command, ...rest] = args;
+    const parsed = parseGlobalOptions(args);
+    debug = parsed.debug;
+    const [command, ...rest] = parsed.args;
     if (
       !command ||
       command === 'help' ||
@@ -77,6 +114,48 @@ export async function run(
     if (command === 'list') {
       if (rest.length > 0) throw usageError('list does not accept arguments.');
       await listPets(dependencies);
+      return ExitCode.Success;
+    }
+    if (command === 'login') {
+      if (rest.length > 0) throw usageError('login does not accept arguments.');
+      await (dependencies.login ?? loginCommand)(dependencies);
+      return ExitCode.Success;
+    }
+    if (command === 'logout') {
+      if (rest.length > 1 || (rest[0] && rest[0] !== '--local-only')) {
+        throw usageError('logout accepts only --local-only.');
+      }
+      await (dependencies.logout ?? logoutCommand)(
+        dependencies,
+        rest[0] === '--local-only'
+      );
+      return ExitCode.Success;
+    }
+    if (command === 'whoami') {
+      if (rest.length > 0)
+        throw usageError('whoami does not accept arguments.');
+      await (dependencies.whoami ?? whoamiCommand)(dependencies);
+      return ExitCode.Success;
+    }
+    if (command === 'submit') {
+      const parsed = parseSubmitArgs(rest);
+      await (dependencies.submit ?? submitCommand)(
+        parsed.path,
+        {
+          interactive: process.stdin.isTTY === true,
+          yes: parsed.yes,
+        },
+        dependencies
+      );
+      return ExitCode.Success;
+    }
+    if (command === 'edit') {
+      const parsed = parseEditArgs(rest);
+      await (dependencies.edit ?? editCommand)(
+        parsed.slug,
+        parsed.options,
+        dependencies
+      );
       return ExitCode.Success;
     }
     if (command !== 'install')
@@ -104,8 +183,70 @@ export async function run(
   } catch (error) {
     const normalized = normalizeError(error);
     dependencies.stderr.write(`petdb: ${normalized.message}\n`);
+    const http = debug ? findHttpDebugInfo(normalized) : undefined;
+    if (http) {
+      dependencies.stderr.write(`petdb debug: HTTP ${http.status}\n`);
+      dependencies.stderr.write(`petdb debug: response: ${http.response}\n`);
+    }
     return normalized.exitCode;
   }
+}
+
+function parseGlobalOptions(args: string[]): {
+  args: string[];
+  debug: boolean;
+} {
+  const debugCount = args.filter((argument) => argument === '--debug').length;
+  if (debugCount > 1) throw usageError('--debug may be provided only once.');
+  return {
+    args: args.filter((argument) => argument !== '--debug'),
+    debug: debugCount === 1,
+  };
+}
+
+function parseSubmitArgs(args: string[]): { path: string; yes: boolean } {
+  const positional = args.filter((argument) => argument !== '--yes');
+  const yesCount = args.length - positional.length;
+  if (positional.length !== 1 || yesCount > 1) {
+    throw usageError('submit requires one path and accepts --yes once.');
+  }
+  return { path: positional[0] as string, yes: yesCount === 1 };
+}
+
+function parseEditArgs(args: string[]): { options: EditOptions; slug: string } {
+  const slug = args[0];
+  if (!slug || slug.startsWith('--')) {
+    throw usageError('edit requires one pet slug.');
+  }
+  const options: EditOptions = {};
+  const optionMap = {
+    '--description': 'description',
+    '--display-name': 'displayName',
+    '--manifest': 'manifestPath',
+    '--spritesheet': 'spritesheetPath',
+    '--zip': 'zipPath',
+  } as const;
+  for (let index = 1; index < args.length; index += 2) {
+    const flag = args[index] as keyof typeof optionMap;
+    const value = args[index + 1];
+    const key = optionMap[flag];
+    if (!key || !value || value.startsWith('--')) {
+      throw usageError(`Invalid edit option '${args[index] ?? ''}'.`);
+    }
+    if (options[key] !== undefined) {
+      throw usageError(`Edit option '${flag}' was provided more than once.`);
+    }
+    options[key] = value;
+  }
+  if (Object.keys(options).length === 0) {
+    throw usageError('edit requires at least one editing option.');
+  }
+  if (options.zipPath && (options.manifestPath || options.spritesheetPath)) {
+    throw usageError(
+      '--zip cannot be combined with --manifest or --spritesheet.'
+    );
+  }
+  return { options, slug };
 }
 
 async function listPets(dependencies: AppDependencies): Promise<void> {

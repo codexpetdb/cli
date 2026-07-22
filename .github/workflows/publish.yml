@@ -47,6 +47,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$(git rev-parse FETCH_HEAD)"
       - run: pnpm install --frozen-lockfile --prefer-offline
       - run: pnpm check
+      - run: pnpm openapi:check
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build

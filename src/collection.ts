@@ -4,7 +4,7 @@ import {
   type DownloadOptions,
   discoverApi,
 } from './discovery.js';
-import { CliError, ExitCode } from './errors.js';
+import { captureHttpDebug, CliError, ExitCode } from './errors.js';
 import { isCollectionId, isPublicId } from './pet-id.js';
 
 export const MAX_COLLECTION_PETS = 100;
@@ -60,14 +60,18 @@ export async function downloadCollectionCatalog(
     );
   }
   if (!response.ok) {
+    const http = await captureHttpDebug(response);
     if (response.status === 404 || response.status === 410) {
-      throw integrityError(
-        'Collection catalog is unavailable. It may not be published yet or may be updating; retry later.'
+      throw new CliError(
+        'Collection catalog is unavailable. It may not be published yet or may be updating; retry later.',
+        ExitCode.Integrity,
+        { http }
       );
     }
     throw new CliError(
       `Collection catalog failed with HTTP ${response.status}.`,
-      ExitCode.Network
+      ExitCode.Network,
+      { http }
     );
   }
   if (

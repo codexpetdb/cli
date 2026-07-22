@@ -20,10 +20,24 @@ export interface PetFiles {
   spriteName: 'spritesheet.png' | 'spritesheet.webp';
 }
 
+export interface PetPackageSource extends PetFiles {
+  manifestRecord: Record<string, unknown> & {
+    id: string;
+    spritesheetPath: string;
+  };
+}
+
 export function extractAndValidatePet(
   archive: Uint8Array,
   expectedPetId: string
 ): PetFiles {
+  return extractPetPackage(archive, expectedPetId);
+}
+
+export function extractPetPackage(
+  archive: Uint8Array,
+  expectedPetId?: string
+): PetPackageSource {
   const entryNames = inspectCentralDirectory(archive);
   const expectedSprite = entryNames.find(
     (name) => name === 'spritesheet.png' || name === 'spritesheet.webp'
@@ -58,7 +72,7 @@ export function extractAndValidatePet(
   }
 
   const parsed = parseManifest(manifest);
-  if (parsed.id !== expectedPetId) {
+  if (expectedPetId !== undefined && parsed.id !== expectedPetId) {
     throw integrityError('pet.json id does not match the requested pet id.');
   }
   if (parsed.spritesheetPath !== expectedSprite) {
@@ -69,6 +83,7 @@ export function extractAndValidatePet(
 
   return {
     manifest,
+    manifestRecord: parsed,
     manifestName: 'pet.json',
     sprite,
     spriteName: expectedSprite,
@@ -316,7 +331,7 @@ function validateArchivePath(name: string): void {
   }
 }
 
-function parseManifest(bytes: Uint8Array): {
+function parseManifest(bytes: Uint8Array): Record<string, unknown> & {
   id: string;
   spritesheetPath: string;
 } {
@@ -337,9 +352,9 @@ function parseManifest(bytes: Uint8Array): {
   ) {
     throw integrityError('pet.json must contain id and spritesheetPath.');
   }
-  return {
-    id: manifest.id,
-    spritesheetPath: manifest.spritesheetPath,
+  return manifest as Record<string, unknown> & {
+    id: string;
+    spritesheetPath: string;
   };
 }
 

@@ -1,10 +1,21 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { strToU8, zipSync } from 'fflate';
+import { pathToFileURL } from 'node:url';
+
+let sharp;
+let strToU8;
+let zipSync;
 
 const packageRoot = path.resolve(import.meta.dirname, '..');
 const temporary = await mkdtemp(path.join(tmpdir(), 'petdb-pack-'));
@@ -46,14 +57,47 @@ try {
   }
 
   const installedRoot = path.join(temporary, 'node_modules', 'codexpetdb');
+  const dependencyBridge = path.join(
+    installedRoot,
+    'dist',
+    'pack-smoke-dependencies.mjs'
+  );
+  await writeFile(
+    dependencyBridge,
+    "export { default as sharp } from 'sharp';\nexport { strToU8, zipSync } from 'fflate';\n"
+  );
+  ({ sharp, strToU8, zipSync } = await import(
+    pathToFileURL(dependencyBridge).href
+  ));
   const packageJson = JSON.parse(
     await readFile(path.join(installedRoot, 'package.json'), 'utf8')
   );
   if (packageJson.bin?.petdb !== 'dist/cli.js') {
     throw new Error('Packed package does not expose the petdb binary.');
   }
-  if (await fileExists(path.join(installedRoot, 'contracts', 'openapi.json'))) {
-    throw new Error('Packed package must not contain an OpenAPI snapshot.');
+  for (const includedDocument of [
+    'CHANGELOG.md',
+    'CHANGELOG.zh-CN.md',
+    'README.md',
+    'README.zh-CN.md',
+  ]) {
+    if (!(await fileExists(path.join(installedRoot, includedDocument)))) {
+      throw new Error(`Packed package is missing ${includedDocument}.`);
+    }
+  }
+  for (const forbidden of [
+    path.join(installedRoot, 'contracts'),
+    path.join(installedRoot, 'openapi-ts.config.mjs'),
+    path.join(installedRoot, 'src', 'generated'),
+  ]) {
+    if (await fileExists(forbidden)) {
+      throw new Error(
+        `Packed package contains forbidden contract source: ${forbidden}`
+      );
+    }
+  }
+  if (packageJson.exports !== undefined) {
+    throw new Error('Packed package must not expose generated SDK subpaths.');
   }
 
   const cli = path.join(installedRoot, 'dist', 'cli.js');
@@ -70,6 +114,11 @@ try {
     'petdb list',
     'petdb install <pet-slug>',
     'petdb install --collection <collection-slug>',
+    'petdb login',
+    'petdb logout [--local-only]',
+    'petdb whoami',
+    'petdb submit <path> [--yes]',
+    'petdb edit <slug> [editing options]',
   ]) {
     if (!help.includes(command)) {
       throw new Error(`Packed CLI help is missing: ${command}`);
@@ -77,6 +126,44 @@ try {
   }
   if (help.includes('petdb add')) {
     throw new Error('Packed CLI help still exposes the removed add command.');
+  }
+  const sharpSmoke = path.join(temporary, 'sharp-smoke');
+  await mkdir(sharpSmoke);
+  await Promise.all([
+    writeFile(
+      path.join(sharpSmoke, 'pet.json'),
+      JSON.stringify({
+        description: 'Pack smoke fixture',
+        displayName: 'Pack smoke fixture',
+        id: 'pack-smoke-fixture',
+        spritesheetPath: 'spritesheet.webp',
+      })
+    ),
+    writeFile(
+      path.join(sharpSmoke, 'spritesheet.webp'),
+      await sharp({
+        create: {
+          background: { alpha: 0, b: 0, g: 0, r: 0 },
+          channels: 4,
+          height: 1872,
+          width: 1536,
+        },
+      })
+        .webp()
+        .toBuffer()
+    ),
+  ]);
+  const installedPetSource = await import(
+    pathToFileURL(path.join(installedRoot, 'dist', 'pet-source.js')).href
+  );
+  const prepared = await installedPetSource.prepareDirectorySource(sharpSmoke);
+  const posterMetadata = await sharp(prepared.posterBytes).metadata();
+  if (
+    posterMetadata.format !== 'webp' ||
+    posterMetadata.width !== 192 ||
+    posterMetadata.height !== 208
+  ) {
+    throw new Error('Packed sharp runtime did not generate poster.webp.');
   }
 
   const pets = new Map([
@@ -360,7 +447,7 @@ function assertCountDelta(counts, before, key, expected) {
 
 async function fileExists(file) {
   try {
-    await readFile(file);
+    await stat(file);
     return true;
   } catch (error) {
     if (error?.code === 'ENOENT') return false;

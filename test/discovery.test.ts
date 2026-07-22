@@ -154,6 +154,25 @@ describe('catalog discovery and downloads', () => {
     );
   });
 
+  it('captures public API failure responses for debug output', async () => {
+    await expect(
+      discoverApi('https://pets.example', {
+        fetchImpl: vi.fn(async () =>
+          Response.json(
+            { authorization: 'private', detail: 'Service unavailable.' },
+            { status: 503 }
+          )
+        ) as typeof fetch,
+      })
+    ).rejects.toMatchObject({
+      http: {
+        response:
+          '{"authorization":"[REDACTED]","detail":"Service unavailable."}',
+        status: 503,
+      },
+    } satisfies Partial<CliError>);
+  });
+
   it('rejects a catalog with an unexpected Content-Type', async () => {
     const discoveredApi = await discovered();
 
