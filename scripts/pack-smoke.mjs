@@ -51,7 +51,7 @@ try {
   } else {
     run(
       process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
-      ['add', '--offline', '--ignore-scripts', tarball],
+      ['add', '--prefer-offline', '--ignore-scripts', tarball],
       temporary
     );
   }

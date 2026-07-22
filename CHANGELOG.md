@@ -41,6 +41,8 @@ All notable changes to the CodexPetDB CLI are documented in this file.
   packed-package tests.
 - Added packed runtime smoke coverage for `sharp` on Node.js 20 across Linux,
   macOS, and Windows CI.
+- Allowed packed runtime smoke installation to fetch missing platform-specific
+  optional dependencies on clean CI runners.
 - Expanded the English and Simplified Chinese READMEs with complete command,
   validation, credential, exit-code, and release documentation.
 

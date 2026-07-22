@@ -36,6 +36,8 @@
 - 新增 OpenAPI 防漂移检查，并扩展命令、API、凭证、资源和打包产物测试。
 - CI 在 Linux、macOS 和 Windows 的 Node.js 20 环境增加 `sharp` 打包 runtime
   smoke。
+- 打包 runtime smoke 在全新 CI runner 缺少平台相关 optional dependency 时允许
+  从 registry 补齐依赖。
 - 扩充英文和简体中文 README，完整记录命令、校验、凭证、退出码和发布流程。
 
 ## 1.0.0 - 2026-07-21
