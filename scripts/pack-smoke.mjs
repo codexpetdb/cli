@@ -460,7 +460,9 @@ function run(command, args, cwd) {
     cwd,
     encoding: 'utf8',
     env: process.env,
+    shell: process.platform === 'win32',
   });
+  if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(
       `${command} ${args.join(' ')} failed:\n${result.stdout}\n${result.stderr}`

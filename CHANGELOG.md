@@ -45,6 +45,8 @@ All notable changes to the CodexPetDB CLI are documented in this file.
   optional dependencies on clean CI runners.
 - Fixed hidden tarball artifact upload so Node.js 20 runtime smoke runs on the
   actual package across Linux, macOS, and Windows.
+- Fixed Windows execution of npm and pnpm command shims in packed runtime
+  smoke tests.
 - Expanded the English and Simplified Chinese READMEs with complete command,
   validation, credential, exit-code, and release documentation.
 

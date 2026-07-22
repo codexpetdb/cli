@@ -40,6 +40,7 @@
   从 registry 补齐依赖。
 - 修复隐藏 tarball artifact 的上传，使 Linux、macOS 和 Windows 的 Node.js 20
   runtime smoke 都能运行真实 package。
+- 修复打包 runtime smoke 在 Windows 下执行 npm 和 pnpm command shim 的方式。
 - 扩充英文和简体中文 README，完整记录命令、校验、凭证、退出码和发布流程。
 
 ## 1.0.0 - 2026-07-21
